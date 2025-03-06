@@ -9,7 +9,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
-import { startTransfer, getWalletBalances } from "@/lib/actions"
+import { startTransfer, getWalletBalances, checkWalletBalance } from "@/lib/actions"
 import { WalletStatus } from "@/components/wallet-status"
 import { NetworkStatus } from "@/components/network-status"
 import { HexGrid } from "@/components/hex-grid"
@@ -21,7 +21,7 @@ import { InputMethodToggle } from "@/components/input-method-toggle"
 import { validatePrivateKey } from "@/lib/validation"
 import type { GasSpeed } from "@/lib/gas-price"
 
-type WalletStatusType = "idle" | "processing" | "success" | "error"
+type WalletStatusType = "idle" | "processing" | "success" | "error" | "low_balance"
 
 interface SourceWallet {
   privateKey: string
@@ -233,15 +233,41 @@ export default function Home() {
     toast.info(`Starting ETH transfer process with ${gasSpeed} gas price...`)
 
     try {
+      // Check balances before starting the transfer
+      let hasLowBalanceWallets = false
+
       // Update UI to show processing status
       const processingWallets = [...sourceWallets]
-      validWallets.forEach((wallet) => {
+      for (let i = 0; i < validWallets.length; i++) {
+        const wallet = validWallets[i]
         const index = sourceWallets.findIndex((w) => w.privateKey === wallet.privateKey)
+
         if (index !== -1) {
-          processingWallets[index].status = "processing"
+          try {
+            // Check if this wallet has sufficient balance
+            const { hasSufficientBalance, balance, minRequired } = await checkWalletBalance(wallet.privateKey)
+
+            if (!hasSufficientBalance) {
+              processingWallets[index].status = "low_balance"
+              processingWallets[index].error = `Balance too low (${balance} ETH). Minimum required: ${minRequired} ETH.`
+              processingWallets[index].balance = balance
+              hasLowBalanceWallets = true
+            } else {
+              processingWallets[index].status = "processing"
+            }
+          } catch (error) {
+            processingWallets[index].status = "error"
+            processingWallets[index].error = (error as Error).message
+          }
         }
-      })
+      }
+
       setSourceWallets(processingWallets)
+
+      // If any wallets have low balance, show a warning
+      if (hasLowBalanceWallets) {
+        toast.warning("Some wallets have insufficient balance for transfer")
+      }
 
       // Switch to monitor tab to show progress
       setActiveTab("monitor")
@@ -271,10 +297,14 @@ export default function Home() {
 
       setSourceWallets(updatedWallets)
 
-      // Check if any transfers failed
+      // Check if any transfers failed or had low balance
       const anyFailed = result.some((r) => r.status === "error")
+      const anyLowBalance = result.some((r) => r.status === "low_balance")
+
       if (anyFailed) {
         toast.error("Some transfers failed. Check the monitor tab for details.")
+      } else if (anyLowBalance) {
+        toast.warning("Some wallets had insufficient balance for transfer.")
       } else {
         toast.success("Transfer process completed successfully!")
       }

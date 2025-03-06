@@ -10,7 +10,7 @@ interface DestinationWallet {
   error?: string
 }
 
-type WalletStatus = "idle" | "processing" | "success" | "error"
+type WalletStatus = "idle" | "processing" | "success" | "error" | "low_balance"
 
 // Get the RPC endpoint from environment variables
 const getRpcEndpoint = () => {
@@ -49,6 +49,30 @@ export async function getWalletBalances(privateKeys: string[]) {
   return results
 }
 
+// Check if a wallet has sufficient balance for transfer
+export async function checkWalletBalance(privateKey: string) {
+  try {
+    const rpcEndpoint = getRpcEndpoint()
+    const { balance, address } = await getWalletBalance(privateKey, rpcEndpoint)
+
+    // Convert balance to ETH (as a number)
+    const balanceEth = Number.parseFloat(balance)
+
+    // Minimum required balance (0.005 ETH)
+    const minBalance = 0.005
+
+    return {
+      address,
+      balance,
+      hasSufficientBalance: balanceEth >= minBalance,
+      minRequired: minBalance,
+    }
+  } catch (error) {
+    console.error("Error checking wallet balance:", error)
+    throw error
+  }
+}
+
 // Start the transfer process
 export async function startTransfer(
   privateKeys: string[],
@@ -73,8 +97,26 @@ export async function startTransfer(
     }
 
     try {
-      // Get initial balance
-      const { balance: initialBalance, address: sourceAddress } = await getWalletBalance(privateKey, rpcEndpoint)
+      // Get initial balance and check if it's sufficient
+      const {
+        balance: initialBalance,
+        address: sourceAddress,
+        hasSufficientBalance,
+        minRequired,
+      } = await checkWalletBalance(privateKey)
+
+      // If balance is too low, mark as low_balance and continue to next wallet
+      if (!hasSufficientBalance) {
+        console.log(
+          `Wallet ${sourceAddress} has insufficient balance: ${initialBalance} ETH (minimum required: ${minRequired} ETH)`,
+        )
+        results.push({
+          status: "low_balance",
+          balance: initialBalance,
+          error: `Balance too low (${initialBalance} ETH). Minimum required: ${minRequired} ETH.`,
+        })
+        continue
+      }
 
       // Set status to processing
       results.push({ status: "processing", balance: initialBalance })
