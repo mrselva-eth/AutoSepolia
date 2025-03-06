@@ -1,7 +1,4 @@
-// Add this at the top of the file, which will enable streaming responses
-// to avoid timeouts on Netlify
-export const dynamic = "force-dynamic"
-;("use server")
+"use server"
 
 import { distributeFunds, getWalletBalance } from "./ethereum"
 import type { GasSpeed } from "./gas-price"

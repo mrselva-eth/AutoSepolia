@@ -3,11 +3,11 @@
   publish = ".next"
 
 [functions]
-  # Increase the timeout for functions to handle longer-running operations
   node_bundler = "esbuild"
   included_files = ["**/*.{js,jsx,ts,tsx}"]
   external_node_modules = ["ethers"]
-  # Increase timeout to 60 seconds
+
+[functions."*"]
   timeout = 60
 
 [[plugins]]

@@ -1,5 +1,8 @@
 "use client"
 
+// Add this to make the page dynamic and avoid caching
+export const dynamic = "force-dynamic"
+
 import { useState, useEffect, useCallback } from "react"
 import { motion } from "framer-motion"
 import { Shield, Wallet, ArrowRightLeft, Plus, Minus, AlertCircle } from "lucide-react"
