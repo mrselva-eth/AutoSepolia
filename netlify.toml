@@ -1,0 +1,19 @@
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[functions]
+  # Increase the timeout for functions to handle longer-running operations
+  node_bundler = "esbuild"
+  included_files = ["**/*.{js,jsx,ts,tsx}"]
+  external_node_modules = ["ethers"]
+  # Increase timeout to 60 seconds
+  timeout = 60
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[build.environment]
+  # Add environment variable to increase function timeout
+  AWS_LAMBDA_JS_RUNTIME = "nodejs18.x"
+

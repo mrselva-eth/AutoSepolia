@@ -1,16 +1,25 @@
-"use server"
+// Add this at the top of the file, which will enable streaming responses
+// to avoid timeouts on Netlify
+export const dynamic = "force-dynamic"
+;("use server")
 
 import { distributeFunds, getWalletBalance } from "./ethereum"
 import type { GasSpeed } from "./gas-price"
 
-interface DestinationWallet {
+export interface DestinationWallet {
   address: string
   percentage: number
   isValid?: boolean
   error?: string
 }
 
-type WalletStatus = "idle" | "processing" | "success" | "error" | "low_balance"
+export type WalletStatus = "idle" | "processing" | "success" | "error" | "low_balance"
+
+export interface WalletResult {
+  status: WalletStatus
+  balance: string
+  error?: string
+}
 
 // Get the RPC endpoint from environment variables
 const getRpcEndpoint = () => {
@@ -27,9 +36,9 @@ const getEtherscanApiKey = () => {
 }
 
 // Get wallet balances
-export async function getWalletBalances(privateKeys: string[]) {
+export async function getWalletBalances(privateKeys: string[]): Promise<WalletResult[]> {
   const rpcEndpoint = getRpcEndpoint()
-  const results = []
+  const results: WalletResult[] = []
 
   for (const privateKey of privateKeys) {
     try {
@@ -50,7 +59,12 @@ export async function getWalletBalances(privateKeys: string[]) {
 }
 
 // Check if a wallet has sufficient balance for transfer
-export async function checkWalletBalance(privateKey: string) {
+export async function checkWalletBalance(privateKey: string): Promise<{
+  address: string
+  balance: string
+  hasSufficientBalance: boolean
+  minRequired: number
+}> {
   try {
     const rpcEndpoint = getRpcEndpoint()
     const { balance, address } = await getWalletBalance(privateKey, rpcEndpoint)
@@ -79,12 +93,12 @@ export async function startTransfer(
   destinationWallets: DestinationWallet[],
   distributionMethod: "equal" | "percentage" | "custom",
   gasSpeed: GasSpeed = "average",
-) {
+): Promise<WalletResult[]> {
   console.log("Starting transfer process...")
   const rpcEndpoint = getRpcEndpoint()
   const etherscanApiKey = getEtherscanApiKey()
   console.log(`Using Etherscan API key: ${etherscanApiKey ? "Yes" : "No"}`)
-  const results = []
+  const results: WalletResult[] = []
 
   // Process each source wallet
   for (let i = 0; i < privateKeys.length; i++) {
