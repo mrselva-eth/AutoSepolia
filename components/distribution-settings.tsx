@@ -1,13 +1,16 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Settings, Play, Square, ArrowRight } from "lucide-react"
+import { Settings, Play, Square, ArrowRight, Zap, Clock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { NetworkStatus } from "@/components/network-status"
 import { Slider } from "@/components/ui/slider"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { GasPriceDisplay } from "@/components/gas-price-display"
+import type { GasSpeed } from "@/lib/gas-price"
 
 interface DistributionWallet {
   address: string
@@ -20,7 +23,7 @@ interface DistributionSettingsProps {
   destinationWallets: DistributionWallet[]
   setDestinationWallets: (wallets: DistributionWallet[]) => void
   isRunning: boolean
-  onStart: () => void
+  onStart: (gasSpeed: GasSpeed) => void
   onStop: () => void
 }
 
@@ -139,25 +142,101 @@ export function DistributionSettings({
         </CardContent>
         <CardFooter className="flex flex-col space-y-4">
           <NetworkStatus />
-          <Button
-            onClick={isRunning ? onStop : onStart}
-            disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
-            className={`w-full ${
-              isRunning
-                ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
-                : "bg-green-600 hover:bg-green-700 dark:bg-gradient-to-r dark:from-green-600 dark:to-emerald-600 dark:hover:from-green-500 dark:hover:to-emerald-500"
-            }`}
-          >
-            {isRunning ? (
-              <>
-                <Square className="h-4 w-4 mr-2" /> Stop Transfer
-              </>
-            ) : (
-              <>
-                <Play className="h-4 w-4 mr-2" /> Start Transfer
-              </>
-            )}
-          </Button>
+
+          <Tabs defaultValue="average" className="w-full">
+            <TabsList className="grid grid-cols-3 mb-4">
+              <TabsTrigger value="slow" className="flex items-center">
+                <Clock className="h-4 w-4 mr-2" /> Slow
+              </TabsTrigger>
+              <TabsTrigger value="average" className="flex items-center">
+                <ArrowRight className="h-4 w-4 mr-2" /> Average
+              </TabsTrigger>
+              <TabsTrigger value="fast" className="flex items-center">
+                <Zap className="h-4 w-4 mr-2" /> Fast
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="slow">
+              <div className="text-xs text-center mb-2 text-gray-500 flex justify-center">
+                <span className="mr-1">Lower gas price</span>
+                <GasPriceDisplay speed="slow" />
+                <span className="ml-1">, may take longer to confirm</span>
+              </div>
+              <Button
+                onClick={isRunning ? onStop : () => onStart("slow")}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
+                className={`w-full ${
+                  isRunning
+                    ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
+                    : "bg-green-600 hover:bg-green-700 dark:bg-gradient-to-r dark:from-green-600 dark:to-emerald-600 dark:hover:from-green-500 dark:hover:to-emerald-500"
+                }`}
+              >
+                {isRunning ? (
+                  <>
+                    <Square className="h-4 w-4 mr-2" /> Stop Transfer
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" /> Start Transfer (Slow)
+                  </>
+                )}
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="average">
+              <div className="text-xs text-center mb-2 text-gray-500 flex justify-center">
+                <span className="mr-1">Balanced gas price</span>
+                <GasPriceDisplay speed="average" />
+                <span className="ml-1">, confirms within minutes</span>
+              </div>
+              <Button
+                onClick={isRunning ? onStop : () => onStart("average")}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
+                className={`w-full ${
+                  isRunning
+                    ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
+                    : "bg-green-600 hover:bg-green-700 dark:bg-gradient-to-r dark:from-green-600 dark:to-emerald-600 dark:hover:from-green-500 dark:hover:to-emerald-500"
+                }`}
+              >
+                {isRunning ? (
+                  <>
+                    <Square className="h-4 w-4 mr-2" /> Stop Transfer
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" /> Start Transfer (Average)
+                  </>
+                )}
+              </Button>
+            </TabsContent>
+
+            <TabsContent value="fast">
+              <div className="text-xs text-center mb-2 text-gray-500 flex justify-center">
+                <span className="mr-1">Higher gas price</span>
+                <GasPriceDisplay speed="fast" />
+                <span className="ml-1">, faster but more expensive</span>
+              </div>
+              <Button
+                onClick={isRunning ? onStop : () => onStart("fast")}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
+                className={`w-full ${
+                  isRunning
+                    ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
+                    : "bg-green-600 hover:bg-green-700 dark:bg-gradient-to-r dark:from-green-600 dark:to-emerald-600 dark:hover:from-green-500 dark:hover:to-emerald-500"
+                }`}
+              >
+                {isRunning ? (
+                  <>
+                    <Square className="h-4 w-4 mr-2" /> Stop Transfer
+                  </>
+                ) : (
+                  <>
+                    <Play className="h-4 w-4 mr-2" /> Start Transfer (Fast)
+                  </>
+                )}
+              </Button>
+            </TabsContent>
+          </Tabs>
         </CardFooter>
       </Card>
 

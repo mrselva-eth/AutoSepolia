@@ -1,6 +1,7 @@
 "use server"
 
 import { distributeFunds, getWalletBalance } from "./ethereum"
+import type { GasSpeed } from "./gas-price"
 
 interface DestinationWallet {
   address: string
@@ -18,6 +19,11 @@ const getRpcEndpoint = () => {
     throw new Error("INFURA_PROJECT_ID is not set in the environment variables")
   }
   return `https://sepolia.infura.io/v3/${infuraProjectId}`
+}
+
+// Add a function to get the Etherscan API key
+const getEtherscanApiKey = () => {
+  return process.env.ETHERSCAN_API_KEY || ""
 }
 
 // Get wallet balances
@@ -48,8 +54,12 @@ export async function startTransfer(
   privateKeys: string[],
   destinationWallets: DestinationWallet[],
   distributionMethod: "equal" | "percentage" | "custom",
+  gasSpeed: GasSpeed = "average",
 ) {
+  console.log("Starting transfer process...")
   const rpcEndpoint = getRpcEndpoint()
+  const etherscanApiKey = getEtherscanApiKey()
+  console.log(`Using Etherscan API key: ${etherscanApiKey ? "Yes" : "No"}`)
   const results = []
 
   // Process each source wallet
@@ -81,8 +91,24 @@ export async function startTransfer(
         }))
       }
 
+      console.log(`Distributing funds from wallet ${sourceAddress} to ${processedDestinations.length} destination(s)`)
+      console.log(`Using gas speed: ${gasSpeed}`)
+
       // Distribute funds
-      await distributeFunds(privateKey, processedDestinations, rpcEndpoint)
+      const distributionResults = await distributeFunds(
+        privateKey,
+        processedDestinations,
+        rpcEndpoint,
+        gasSpeed,
+        etherscanApiKey,
+      )
+
+      // Check if any transfers were successful
+      const anySuccess = distributionResults.some((result) => result.success)
+
+      if (!anySuccess) {
+        throw new Error("All transfers failed. Check console for details.")
+      }
 
       // Get updated balance
       const { balance: updatedBalance } = await getWalletBalance(privateKey, rpcEndpoint)
@@ -95,10 +121,10 @@ export async function startTransfer(
       // Get current balance if possible
       try {
         const { balance } = await getWalletBalance(privateKey, rpcEndpoint)
-        results[i] = { status: "error", balance }
+        results[i] = { status: "error", balance, error: (error as Error).message }
       } catch {
         // If we can't get the balance, just mark as error
-        results[i] = { status: "error", balance: "0" }
+        results[i] = { status: "error", balance: "0", error: (error as Error).message }
       }
     }
   }

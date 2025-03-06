@@ -7,9 +7,10 @@ interface WalletStatusProps {
   index: number
   balance: string
   status: "idle" | "processing" | "success" | "error"
+  error?: string
 }
 
-export function WalletStatus({ index, balance, status }: WalletStatusProps) {
+export function WalletStatus({ index, balance, status, error }: WalletStatusProps) {
   const getStatusIcon = () => {
     switch (status) {
       case "processing":
@@ -54,16 +55,25 @@ export function WalletStatus({ index, balance, status }: WalletStatusProps) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, delay: index * 0.1 }}
-      className={`flex items-center justify-between p-3 rounded-md border ${getStatusColor()}`}
+      className={`flex flex-col p-3 rounded-md border ${getStatusColor()}`}
     >
-      <div className="flex items-center">
-        {getStatusIcon()}
-        <div className="ml-3">
-          <div className="text-sm font-medium">Wallet {index + 1}</div>
-          <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {balance} ETH</div>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center">
+          {getStatusIcon()}
+          <div className="ml-3">
+            <div className="text-sm font-medium">Wallet {index + 1}</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {balance} ETH</div>
+          </div>
         </div>
+        <div className="text-sm font-medium">{getStatusText()}</div>
       </div>
-      <div className="text-sm font-medium">{getStatusText()}</div>
+
+      {status === "error" && error && (
+        <div className="mt-2 text-xs text-red-500 flex items-start">
+          <AlertCircle className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
     </motion.div>
   )
 }

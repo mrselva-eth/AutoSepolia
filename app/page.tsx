@@ -19,6 +19,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { useTheme } from "next-themes"
 import { InputMethodToggle } from "@/components/input-method-toggle"
 import { validatePrivateKey } from "@/lib/validation"
+import type { GasSpeed } from "@/lib/gas-price"
 
 type WalletStatusType = "idle" | "processing" | "success" | "error"
 
@@ -160,6 +161,12 @@ export default function Home() {
 
       setKeyErrors(errors)
       setSourceWallets(newWallets)
+
+      // Fetch balances for valid wallets
+      const validWallets = newWallets.filter((w) => w.privateKey.trim() !== "" && w.isValid)
+      if (validWallets.length > 0) {
+        fetchBalancesForWallets(validWallets)
+      }
     } else {
       // If no keys, create a single empty wallet
       setSourceWallets([{ privateKey: "", balance: "0", status: "idle", isValid: true }])
@@ -185,7 +192,7 @@ export default function Home() {
     }
   }, [sourceInputMethod, sourceWallets])
 
-  const handleStartTransfer = async () => {
+  const handleStartTransfer = async (gasSpeed: GasSpeed = "average") => {
     // Validate destination wallets
     if (destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)) {
       toast.error("Please add at least one destination wallet address")
@@ -223,24 +230,28 @@ export default function Home() {
     }
 
     setIsRunning(true)
-    toast.info("Starting ETH transfer process...")
+    toast.info(`Starting ETH transfer process with ${gasSpeed} gas price...`)
 
     try {
       // Update UI to show processing status
       const processingWallets = [...sourceWallets]
-      validWallets.forEach((_, i) => {
-        const index = sourceWallets.findIndex((w) => w.privateKey === validWallets[i].privateKey)
+      validWallets.forEach((wallet) => {
+        const index = sourceWallets.findIndex((w) => w.privateKey === wallet.privateKey)
         if (index !== -1) {
           processingWallets[index].status = "processing"
         }
       })
       setSourceWallets(processingWallets)
 
+      // Switch to monitor tab to show progress
+      setActiveTab("monitor")
+
       // Call the actual transfer function
       const result = await startTransfer(
         validWallets.map((w) => w.privateKey),
         destinationWallets,
         distributionMethod,
+        gasSpeed,
       )
 
       // Update UI with results
@@ -252,23 +263,32 @@ export default function Home() {
           if (resultIndex < result.length) {
             updatedWallets[i].status = result[resultIndex].status as WalletStatusType
             updatedWallets[i].balance = result[resultIndex].balance
+            updatedWallets[i].error = result[resultIndex].error
             resultIndex++
           }
         }
       }
 
       setSourceWallets(updatedWallets)
-      toast.success("Transfer process completed")
+
+      // Check if any transfers failed
+      const anyFailed = result.some((r) => r.status === "error")
+      if (anyFailed) {
+        toast.error("Some transfers failed. Check the monitor tab for details.")
+      } else {
+        toast.success("Transfer process completed successfully!")
+      }
     } catch (error) {
       toast.error(`Error during transfer process: ${(error as Error).message}`)
       console.error(error)
 
-      // Reset status to idle
+      // Reset status to error
       const resetWallets = [...sourceWallets]
-      validWallets.forEach((_, i) => {
-        const index = sourceWallets.findIndex((w) => w.privateKey === validWallets[i].privateKey)
+      validWallets.forEach((wallet) => {
+        const index = sourceWallets.findIndex((w) => w.privateKey === wallet.privateKey)
         if (index !== -1) {
           resetWallets[index].status = "error"
+          resetWallets[index].error = (error as Error).message
         }
       })
       setSourceWallets(resetWallets)
@@ -480,7 +500,13 @@ export default function Home() {
                 <CardContent>
                   <div className="space-y-4">
                     {sourceWallets.map((wallet, index) => (
-                      <WalletStatus key={index} index={index} balance={wallet.balance} status={wallet.status} />
+                      <WalletStatus
+                        key={index}
+                        index={index}
+                        balance={wallet.balance}
+                        status={wallet.status}
+                        error={wallet.error}
+                      />
                     ))}
                   </div>
                 </CardContent>

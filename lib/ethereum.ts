@@ -1,24 +1,18 @@
 import { ethers } from "ethers"
+import { getGasPrice, type GasSpeed } from "./gas-price"
 
 // Function to wait for a transaction to be mined or timeout
-export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 30000) {
+export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 120000) {
+  // Increased timeout to 120 seconds for Sepolia network
   const startTime = Date.now()
   while (Date.now() - startTime < timeout) {
     const receipt = await provider.getTransactionReceipt(txHash)
     if (receipt) {
       return receipt
     }
-    await new Promise((resolve) => setTimeout(resolve, 1000)) // Wait 1 second before checking again
+    await new Promise((resolve) => setTimeout(resolve, 2000)) // Check every 2 seconds
   }
   throw new Error("Transaction not mined within the timeout period")
-}
-
-// Function to get current gas price with optional priority fee
-export async function getCurrentGasPrice(provider: ethers.JsonRpcProvider) {
-  const feeData = await provider.getFeeData()
-  const baseFee = feeData.gasPrice || ethers.parseUnits("10", "gwei")
-  const priorityFee = feeData.maxPriorityFeePerGas || ethers.parseUnits("1", "gwei")
-  return baseFee + priorityFee
 }
 
 // Function to transfer funds from a wallet to a destination wallet
@@ -27,7 +21,10 @@ export async function transferFunds(
   destinationAddress: string,
   rpcEndpoint: string,
   percentage = 100,
+  gasSpeed: GasSpeed = "average",
+  etherscanApiKey?: string,
 ) {
+  console.log(`Starting transfer to ${destinationAddress}...`)
   const provider = new ethers.JsonRpcProvider(rpcEndpoint)
 
   // Create wallet instance
@@ -40,7 +37,7 @@ export async function transferFunds(
 
   // Check if balance is too low to transfer (need to keep some for gas)
   const minBalance = ethers.parseEther("0.005") // Minimum balance to initiate transfer
-  const gasReserve = ethers.parseEther("0.002") // Keep some ETH for gas
+  const gasReserve = ethers.parseEther("0.003") // Increased gas reserve
 
   if (balance < minBalance) {
     throw new Error(`Balance too low to transfer (< ${ethers.formatEther(minBalance)} SepoliaETH)`)
@@ -53,44 +50,102 @@ export async function transferFunds(
   // Estimate gas for the transaction
   const gasLimit = BigInt(21000) // Standard ETH transfer gas limit
 
-  // Get current gas price
-  const gasPrice = await getCurrentGasPrice(provider)
-  const gasCost = gasPrice * gasLimit
+  // Retry mechanism with increasing gas price and proper nonce management
+  const maxRetries = 3
+  let lastError = null
+  let nonce = null
 
-  // Adjust transfer amount if needed
-  if (transferAmount - gasCost <= BigInt(0)) {
-    throw new Error("Not enough balance to cover transfer after gas costs")
-  }
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      // Get gas price based on speed and attempt number
+      // For retries, we gradually increase the speed
+      let currentSpeed: GasSpeed = gasSpeed
+      if (attempt === 1) {
+        currentSpeed = "average" // Second attempt uses average speed if not already
+      } else if (attempt === 2) {
+        currentSpeed = "fast" // Third attempt uses fast speed
+      }
 
-  console.log(`Transferring ${ethers.formatEther(transferAmount)} SepoliaETH to ${destinationAddress}`)
+      console.log(`Getting gas price for speed: ${currentSpeed} (attempt ${attempt + 1})`)
+      const gasPrice = await getGasPrice(provider, currentSpeed, etherscanApiKey)
 
-  // Create and send transaction
-  const tx = {
-    to: destinationAddress,
-    value: transferAmount,
-    gasLimit: gasLimit,
-    maxFeePerGas: gasPrice,
-  }
+      // For retries, boost the gas price significantly to replace the transaction
+      const boostFactor = 1.0 + attempt * 0.3 // 1.0x, 1.3x, 1.6x
+      const boostedGasPrice = attempt > 0 ? BigInt(Math.floor(Number(gasPrice) * boostFactor)) : gasPrice
 
-  const transaction = await wallet.sendTransaction(tx)
-  console.log(`Transaction sent: ${transaction.hash}`)
+      console.log(`Gas price: ${ethers.formatUnits(boostedGasPrice, "gwei")} Gwei${attempt > 0 ? " (boosted)" : ""}`)
 
-  // Wait for transaction to be mined
-  try {
-    const receipt = await waitForTransaction(provider, transaction.hash)
-    console.log(`Transaction confirmed in block ${receipt.blockNumber}`)
-    return {
-      success: true,
-      hash: transaction.hash,
-      blockNumber: receipt.blockNumber,
-      amount: ethers.formatEther(transferAmount),
-      from: walletAddress,
-      to: destinationAddress,
+      // Get the nonce for the first attempt and reuse it for retries
+      if (nonce === null) {
+        nonce = await provider.getTransactionCount(wallet.address, "pending")
+        console.log(`Using nonce: ${nonce}`)
+      }
+
+      const gasCost = boostedGasPrice * gasLimit
+
+      // Adjust transfer amount if needed
+      if (transferAmount - gasCost <= BigInt(0)) {
+        throw new Error("Not enough balance to cover transfer after gas costs")
+      }
+
+      console.log(`Transferring ${ethers.formatEther(transferAmount)} SepoliaETH to ${destinationAddress}`)
+
+      // Create and send transaction with explicit nonce
+      const tx = {
+        to: destinationAddress,
+        value: transferAmount,
+        gasLimit: gasLimit,
+        maxFeePerGas: boostedGasPrice,
+        maxPriorityFeePerGas: ethers.parseUnits((2 + attempt).toString(), "gwei"),
+        nonce: nonce,
+      }
+
+      console.log("Sending transaction...")
+      const transaction = await wallet.sendTransaction(tx)
+      console.log(`Transaction sent: ${transaction.hash}`)
+
+      // Wait for transaction to be mined
+      console.log("Waiting for transaction confirmation...")
+      const receipt = await waitForTransaction(provider, transaction.hash)
+      console.log(`Transaction confirmed in block ${receipt.blockNumber}`)
+
+      // Verify the transaction was successful
+      if (receipt.status === 0) {
+        throw new Error("Transaction failed on the blockchain")
+      }
+
+      return {
+        success: true,
+        hash: transaction.hash,
+        blockNumber: receipt.blockNumber,
+        amount: ethers.formatEther(transferAmount),
+        from: walletAddress,
+        to: destinationAddress,
+      }
+    } catch (error) {
+      console.error(`Attempt ${attempt + 1} failed:`, error)
+      lastError = error
+
+      // Check if this is a "replacement transaction underpriced" error
+      const errorMessage = (error as Error).message || ""
+      if (
+        errorMessage.includes("replacement transaction underpriced") ||
+        errorMessage.includes("could not replace existing tx")
+      ) {
+        console.log("Transaction replacement requires higher gas price")
+      }
+
+      // If this is not the last attempt, wait before retrying
+      if (attempt < maxRetries - 1) {
+        const waitTime = 5000 + attempt * 2000 // 5s, 7s, 9s
+        console.log(`Retrying in ${waitTime / 1000} seconds with higher gas price...`)
+        await new Promise((resolve) => setTimeout(resolve, waitTime))
+      }
     }
-  } catch (error) {
-    console.error("Transaction failed:", error)
-    throw error
   }
+
+  // If we've exhausted all retries, throw the last error
+  throw lastError || new Error("Failed to send transaction after multiple attempts")
 }
 
 // Function to get wallet balance
@@ -114,6 +169,8 @@ export async function distributeFunds(
   sourcePrivateKey: string,
   destinationWallets: { address: string; percentage: number }[],
   rpcEndpoint: string,
+  gasSpeed: GasSpeed = "average",
+  etherscanApiKey?: string,
 ) {
   const results = []
 
@@ -123,22 +180,94 @@ export async function distributeFunds(
     throw new Error("Total percentage must equal 100%")
   }
 
-  for (const destWallet of destinationWallets) {
+  // If we're distributing to multiple wallets, we need to handle each transfer separately
+  if (destinationWallets.length > 1) {
+    // Get source wallet balance first
+    const provider = new ethers.JsonRpcProvider(rpcEndpoint)
+    const wallet = new ethers.Wallet(sourcePrivateKey, provider)
+    const balance = await provider.getBalance(wallet.address)
+
+    console.log(`Source wallet ${wallet.address} has ${ethers.formatEther(balance)} ETH`)
+
+    // Check if balance is too low
+    const minBalance = ethers.parseEther("0.005")
+    if (balance < minBalance) {
+      throw new Error(`Balance too low to transfer (< ${ethers.formatEther(minBalance)} SepoliaETH)`)
+    }
+
+    // Calculate available amount after gas reserve
+    const gasReserve = ethers.parseEther("0.003") * BigInt(destinationWallets.length)
+    const availableAmount = balance - gasReserve
+
+    if (availableAmount <= BigInt(0)) {
+      throw new Error("Not enough balance to cover transfers after gas costs")
+    }
+
+    // Process each destination wallet
+    for (const destWallet of destinationWallets) {
+      try {
+        // Calculate amount for this wallet based on percentage
+        const amountForWallet = BigInt(Math.floor(Number(availableAmount) * (destWallet.percentage / 100)))
+
+        console.log(
+          `Transferring ${ethers.formatEther(amountForWallet)} ETH (${destWallet.percentage}%) to ${destWallet.address}`,
+        )
+
+        // Use the transferFunds function with retry mechanism
+        const result = await transferFunds(
+          sourcePrivateKey,
+          destWallet.address,
+          rpcEndpoint,
+          destWallet.percentage,
+          gasSpeed,
+          etherscanApiKey,
+        )
+
+        results.push({
+          destination: destWallet.address,
+          percentage: destWallet.percentage,
+          ...result,
+        })
+      } catch (error) {
+        console.error(`Error transferring to ${destWallet.address}:`, error)
+        results.push({
+          destination: destWallet.address,
+          percentage: destWallet.percentage,
+          success: false,
+          error: (error as Error).message,
+        })
+      }
+    }
+  } else {
+    // If only one destination, use the standard transfer function
     try {
-      const result = await transferFunds(sourcePrivateKey, destWallet.address, rpcEndpoint, destWallet.percentage)
+      const result = await transferFunds(
+        sourcePrivateKey,
+        destinationWallets[0].address,
+        rpcEndpoint,
+        destinationWallets[0].percentage,
+        gasSpeed,
+        etherscanApiKey,
+      )
       results.push({
-        destination: destWallet.address,
-        percentage: destWallet.percentage,
+        destination: destinationWallets[0].address,
+        percentage: destinationWallets[0].percentage,
         ...result,
       })
     } catch (error) {
       results.push({
-        destination: destWallet.address,
-        percentage: destWallet.percentage,
+        destination: destinationWallets[0].address,
+        percentage: destinationWallets[0].percentage,
         success: false,
         error: (error as Error).message,
       })
     }
+  }
+
+  // Check if any transfers were successful
+  const anySuccess = results.some((result) => result.success)
+  if (!anySuccess) {
+    throw new Error("All transfers failed. Check console for details.")
   }
 
   return results
