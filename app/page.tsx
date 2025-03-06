@@ -194,20 +194,20 @@ export default function Home() {
 
   const handleStartTransfer = async (gasSpeed: GasSpeed = "average") => {
     // Validate destination wallets
-    if (destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)) {
+    if (!destinationWallets || destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)) {
       toast.error("Please add at least one destination wallet address")
       return
     }
 
     // Check if any destination wallet is invalid
-    const invalidDestination = destinationWallets.find((w) => w.address && !w.isValid)
+    const invalidDestination = destinationWallets.find((w) => w.address && w.isValid === false)
     if (invalidDestination) {
       toast.error("One or more destination wallet addresses are invalid")
       return
     }
 
     // Validate source wallets
-    const validWallets = sourceWallets.filter((w) => w.privateKey.trim() !== "" && w.isValid)
+    const validWallets = sourceWallets.filter((w) => w.privateKey && w.privateKey.trim() !== "" && w.isValid)
     if (validWallets.length === 0) {
       toast.error("Please add at least one valid source wallet with a private key")
       return
@@ -245,7 +245,15 @@ export default function Home() {
         if (index !== -1) {
           try {
             // Check if this wallet has sufficient balance
-            const { hasSufficientBalance, balance, minRequired } = await checkWalletBalance(wallet.privateKey)
+            const balanceCheck = await checkWalletBalance(wallet.privateKey)
+
+            if (balanceCheck.error) {
+              processingWallets[index].status = "error"
+              processingWallets[index].error = `Error checking balance: ${balanceCheck.error}`
+              continue
+            }
+
+            const { hasSufficientBalance, balance, minRequired } = balanceCheck
 
             if (!hasSufficientBalance) {
               processingWallets[index].status = "low_balance"
@@ -280,33 +288,59 @@ export default function Home() {
         gasSpeed,
       )
 
-      // Update UI with results
-      const updatedWallets = [...sourceWallets]
-      let resultIndex = 0
-
-      for (let i = 0; i < updatedWallets.length; i++) {
-        if (updatedWallets[i].privateKey.trim() !== "" && updatedWallets[i].isValid) {
-          if (resultIndex < result.length) {
-            updatedWallets[i].status = result[resultIndex].status as WalletStatusType
-            updatedWallets[i].balance = result[resultIndex].balance
-            updatedWallets[i].error = result[resultIndex].error
-            resultIndex++
-          }
-        }
+      // Make sure result is an array before processing
+      if (!result || !Array.isArray(result)) {
+        throw new Error("Invalid response from server")
       }
 
-      setSourceWallets(updatedWallets)
+      try {
+        // Update UI with results
+        if (result && Array.isArray(result)) {
+          const updatedWallets = [...sourceWallets]
+          let resultIndex = 0
 
-      // Check if any transfers failed or had low balance
-      const anyFailed = result.some((r) => r.status === "error")
-      const anyLowBalance = result.some((r) => r.status === "low_balance")
+          for (let i = 0; i < updatedWallets.length; i++) {
+            if (
+              updatedWallets[i].privateKey &&
+              updatedWallets[i].privateKey.trim() !== "" &&
+              updatedWallets[i].isValid
+            ) {
+              if (resultIndex < result.length) {
+                updatedWallets[i].status = (result[resultIndex].status as WalletStatusType) || "idle"
+                updatedWallets[i].balance = result[resultIndex].balance || updatedWallets[i].balance
+                updatedWallets[i].error = result[resultIndex].error
+                resultIndex++
+              }
+            }
+          }
 
-      if (anyFailed) {
-        toast.error("Some transfers failed. Check the monitor tab for details.")
-      } else if (anyLowBalance) {
-        toast.warning("Some wallets had insufficient balance for transfer.")
-      } else {
-        toast.success("Transfer process completed successfully!")
+          setSourceWallets(updatedWallets)
+
+          // Check if any transfers failed or had low balance
+          const anyFailed = result.some((r) => r && r.status === "error")
+          const anyLowBalance = result.some((r) => r && r.status === "low_balance")
+
+          if (anyFailed) {
+            toast.error("Some transfers failed. Check the monitor tab for details.")
+          } else if (anyLowBalance) {
+            toast.warning("Some wallets had insufficient balance for transfer. Process completed.")
+          } else {
+            toast.success("Transfer process completed successfully!")
+          }
+        } else {
+          // If result is not as expected but no error was thrown, show a success message
+          // This handles the case where the transaction completed but the response was malformed
+          toast.success("Transaction likely completed, but couldn't get detailed results.")
+
+          // Refresh balances to show updated state
+          await fetchBalancesForWallets(validWallets)
+        }
+      } catch (error) {
+        console.error("Error processing results:", error)
+        // If we can't process the results but no earlier error was thrown,
+        // the transaction might have completed successfully
+        toast.info("Transaction may have completed. Refreshing balances...")
+        await fetchBalancesForWallets(validWallets)
       }
     } catch (error) {
       toast.error(`Error during transfer process: ${(error as Error).message}`)

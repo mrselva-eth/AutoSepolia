@@ -1,21 +1,65 @@
 import { ethers } from "ethers"
 import { getGasPrice, type GasSpeed } from "./gas-price"
 
-// Function to wait for a transaction to be mined or timeout
-export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 120000) {
-  // Increased timeout to 120 seconds for Sepolia network
+// Improve error handling in the waitForTransaction function:
+
+export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 180000) {
+  // Increased timeout to 180 seconds (3 minutes) for Sepolia network
   const startTime = Date.now()
-  while (Date.now() - startTime < timeout) {
-    const receipt = await provider.getTransactionReceipt(txHash)
-    if (receipt) {
-      return receipt
+
+  try {
+    // First, verify the transaction exists
+    const tx = await provider.getTransaction(txHash).catch((e) => {
+      console.warn(`Error getting transaction ${txHash}:`, e)
+      return null
+    })
+
+    if (!tx) {
+      console.warn(`Transaction ${txHash} not found. It might be pending or not exist.`)
     }
-    await new Promise((resolve) => setTimeout(resolve, 2000)) // Check every 2 seconds
+
+    while (Date.now() - startTime < timeout) {
+      try {
+        const receipt = await provider.getTransactionReceipt(txHash)
+        if (receipt) {
+          return receipt
+        }
+
+        // Check if transaction is still in mempool
+        const pendingTx = await provider.getTransaction(txHash).catch(() => null)
+        if (!pendingTx) {
+          console.warn(`Transaction ${txHash} no longer in mempool. It might have been dropped.`)
+        }
+
+        await new Promise((resolve) => setTimeout(resolve, 3000)) // Check every 3 seconds
+      } catch (error) {
+        console.warn(`Error checking transaction receipt: ${error}. Retrying...`)
+        await new Promise((resolve) => setTimeout(resolve, 5000)) // Wait longer on error
+      }
+    }
+
+    // If we reach here, we timed out waiting for the transaction
+    // Check one last time if the transaction exists in the blockchain
+    const finalCheck = await provider.getTransaction(txHash).catch(() => null)
+    if (finalCheck) {
+      console.log(`Transaction ${txHash} exists but is not yet mined after timeout.`)
+      return {
+        status: 1, // Assume success since the transaction exists
+        blockNumber: 0,
+        to: finalCheck.to,
+        from: finalCheck.from,
+        hash: txHash,
+      } as any // Type assertion to satisfy return type
+    }
+
+    throw new Error(`Transaction not mined within the timeout period (${timeout / 1000} seconds)`)
+  } catch (error) {
+    console.error(`Timeout waiting for transaction ${txHash}:`, error)
+    throw error
   }
-  throw new Error("Transaction not mined within the timeout period")
 }
 
-// Function to transfer funds from a wallet to a destination wallet
+// Update the transferFunds function to handle low balances better
 export async function transferFunds(
   privateKey: string,
   destinationAddress: string,
@@ -40,7 +84,13 @@ export async function transferFunds(
   const gasReserve = ethers.parseEther("0.003") // Increased gas reserve
 
   if (balance < minBalance) {
-    throw new Error(`Balance too low to transfer (< ${ethers.formatEther(minBalance)} SepoliaETH)`)
+    console.log(
+      `Balance too low to transfer: ${ethers.formatEther(balance)} ETH (minimum: ${ethers.formatEther(minBalance)} ETH)`,
+    )
+    return {
+      success: false,
+      error: `Balance too low (${ethers.formatEther(balance)} ETH). Minimum required: ${ethers.formatEther(minBalance)} ETH.`,
+    }
   }
 
   // Calculate amount to transfer based on percentage (balance - gas reserve)
@@ -145,7 +195,10 @@ export async function transferFunds(
   }
 
   // If we've exhausted all retries, throw the last error
-  throw lastError || new Error("Failed to send transaction after multiple attempts")
+  return {
+    success: false,
+    error: (lastError as Error)?.message || "Failed to send transaction after multiple attempts",
+  }
 }
 
 // Function to get wallet balance

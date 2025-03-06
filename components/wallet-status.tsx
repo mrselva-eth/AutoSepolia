@@ -41,6 +41,9 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
     }
   }
 
+  // Add a safe balance display
+  const displayBalance = balance || "0"
+
   const getStatusColor = () => {
     switch (status) {
       case "processing":
@@ -68,7 +71,7 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
           {getStatusIcon()}
           <div className="ml-3">
             <div className="text-sm font-medium">Wallet {index + 1}</div>
-            <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {balance} ETH</div>
+            <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {displayBalance} ETH</div>
           </div>
         </div>
         <div className="text-sm font-medium">{getStatusText()}</div>

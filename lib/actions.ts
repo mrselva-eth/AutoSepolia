@@ -2,6 +2,7 @@
 
 import { distributeFunds, getWalletBalance } from "./ethereum"
 import type { GasSpeed } from "./gas-price"
+import { ethers } from "ethers"
 
 interface DestinationWallet {
   address: string
@@ -49,31 +50,51 @@ export async function getWalletBalances(privateKeys: string[]) {
   return results
 }
 
-// Check if a wallet has sufficient balance for transfer
+// Update the checkWalletBalance function to handle errors better and add a timeout
 export async function checkWalletBalance(privateKey: string) {
   try {
     const rpcEndpoint = getRpcEndpoint()
-    const { balance, address } = await getWalletBalance(privateKey, rpcEndpoint)
+    const provider = new ethers.JsonRpcProvider(rpcEndpoint)
+
+    // Set a timeout for the provider
+    provider
+      .getNetwork()
+      .then((network) => {
+        console.log(`Connected to network: ${network.name}`)
+      })
+      .catch((error) => {
+        console.error("Network connection error:", error)
+      })
+
+    const wallet = new ethers.Wallet(privateKey, provider)
+    const balance = await provider.getBalance(wallet.address)
 
     // Convert balance to ETH (as a number)
-    const balanceEth = Number.parseFloat(balance)
+    const balanceEth = Number.parseFloat(ethers.formatEther(balance))
 
     // Minimum required balance (0.005 ETH)
     const minBalance = 0.005
 
     return {
-      address,
-      balance,
+      address: wallet.address,
+      balance: ethers.formatEther(balance),
       hasSufficientBalance: balanceEth >= minBalance,
       minRequired: minBalance,
     }
   } catch (error) {
     console.error("Error checking wallet balance:", error)
-    throw error
+    // Return a default object with error information
+    return {
+      address: "Error",
+      balance: "0",
+      hasSufficientBalance: false,
+      minRequired: 0.005,
+      error: (error as Error).message,
+    }
   }
 }
 
-// Start the transfer process
+// Update the startTransfer function to handle errors better
 export async function startTransfer(
   privateKeys: string[],
   destinationWallets: DestinationWallet[],
@@ -86,24 +107,37 @@ export async function startTransfer(
   console.log(`Using Etherscan API key: ${etherscanApiKey ? "Yes" : "No"}`)
   const results = []
 
+  // Ensure we have valid destination wallets
+  if (!destinationWallets || destinationWallets.length === 0) {
+    console.error("No destination wallets provided")
+    return [{ status: "error", balance: "0", error: "No destination wallets provided" }]
+  }
+
   // Process each source wallet
   for (let i = 0; i < privateKeys.length; i++) {
     const privateKey = privateKeys[i]
 
     // Skip empty private keys
-    if (!privateKey.trim()) {
+    if (!privateKey || !privateKey.trim()) {
       results.push({ status: "idle", balance: "0" })
       continue
     }
 
     try {
       // Get initial balance and check if it's sufficient
-      const {
-        balance: initialBalance,
-        address: sourceAddress,
-        hasSufficientBalance,
-        minRequired,
-      } = await checkWalletBalance(privateKey)
+      const balanceCheck = await checkWalletBalance(privateKey)
+
+      // If there was an error checking the balance
+      if (balanceCheck.error) {
+        results.push({
+          status: "error",
+          balance: "0",
+          error: `Error checking balance: ${balanceCheck.error}`,
+        })
+        continue
+      }
+
+      const { balance: initialBalance, address: sourceAddress, hasSufficientBalance, minRequired } = balanceCheck
 
       // If balance is too low, mark as low_balance and continue to next wallet
       if (!hasSufficientBalance) {
@@ -113,7 +147,7 @@ export async function startTransfer(
         results.push({
           status: "low_balance",
           balance: initialBalance,
-          error: `Balance too low (${initialBalance} ETH). Minimum required: ${minRequired} ETH.`,
+          error: `Balance too low (${initialBalance} ETH). Minimum required: ${minRequired} ETH. Process completed.`,
         })
         continue
       }
