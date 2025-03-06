@@ -3,20 +3,14 @@
 import { distributeFunds, getWalletBalance } from "./ethereum"
 import type { GasSpeed } from "./gas-price"
 
-export interface DestinationWallet {
+interface DestinationWallet {
   address: string
   percentage: number
   isValid?: boolean
   error?: string
 }
 
-export type WalletStatus = "idle" | "processing" | "success" | "error" | "low_balance"
-
-export interface WalletResult {
-  status: WalletStatus
-  balance: string
-  error?: string
-}
+type WalletStatus = "idle" | "processing" | "success" | "error" | "low_balance"
 
 // Get the RPC endpoint from environment variables
 const getRpcEndpoint = () => {
@@ -33,9 +27,9 @@ const getEtherscanApiKey = () => {
 }
 
 // Get wallet balances
-export async function getWalletBalances(privateKeys: string[]): Promise<WalletResult[]> {
+export async function getWalletBalances(privateKeys: string[]) {
   const rpcEndpoint = getRpcEndpoint()
-  const results: WalletResult[] = []
+  const results = []
 
   for (const privateKey of privateKeys) {
     try {
@@ -56,12 +50,7 @@ export async function getWalletBalances(privateKeys: string[]): Promise<WalletRe
 }
 
 // Check if a wallet has sufficient balance for transfer
-export async function checkWalletBalance(privateKey: string): Promise<{
-  address: string
-  balance: string
-  hasSufficientBalance: boolean
-  minRequired: number
-}> {
+export async function checkWalletBalance(privateKey: string) {
   try {
     const rpcEndpoint = getRpcEndpoint()
     const { balance, address } = await getWalletBalance(privateKey, rpcEndpoint)
@@ -90,12 +79,12 @@ export async function startTransfer(
   destinationWallets: DestinationWallet[],
   distributionMethod: "equal" | "percentage" | "custom",
   gasSpeed: GasSpeed = "average",
-): Promise<WalletResult[]> {
+) {
   console.log("Starting transfer process...")
   const rpcEndpoint = getRpcEndpoint()
   const etherscanApiKey = getEtherscanApiKey()
   console.log(`Using Etherscan API key: ${etherscanApiKey ? "Yes" : "No"}`)
-  const results: WalletResult[] = []
+  const results = []
 
   // Process each source wallet
   for (let i = 0; i < privateKeys.length; i++) {

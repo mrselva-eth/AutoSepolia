@@ -1,9 +1,6 @@
 import { NextResponse } from "next/server"
 import { getEtherscanGasPrice } from "@/lib/gas-price"
 
-// Enable dynamic rendering to avoid caching
-export const dynamic = "force-dynamic"
-
 // Cache gas prices for 2 minutes to reduce API calls
 let cachedGasPrices: {
   slow: string

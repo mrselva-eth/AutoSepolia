@@ -164,7 +164,7 @@ export function DistributionSettings({
               </div>
               <Button
                 onClick={isRunning ? onStop : () => onStart("slow")}
-                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address) || isRunning}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
                 className={`w-full ${
                   isRunning
                     ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
@@ -191,7 +191,7 @@ export function DistributionSettings({
               </div>
               <Button
                 onClick={isRunning ? onStop : () => onStart("average")}
-                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address) || isRunning}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
                 className={`w-full ${
                   isRunning
                     ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"
@@ -218,7 +218,7 @@ export function DistributionSettings({
               </div>
               <Button
                 onClick={isRunning ? onStop : () => onStart("fast")}
-                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address) || isRunning}
+                disabled={destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)}
                 className={`w-full ${
                   isRunning
                     ? "bg-red-500 hover:bg-red-600 dark:bg-red-900/80 dark:hover:bg-red-800"

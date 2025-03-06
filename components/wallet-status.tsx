@@ -2,12 +2,11 @@
 
 import { motion } from "framer-motion"
 import { Wallet, CheckCircle, AlertCircle, Clock, AlertTriangle } from "lucide-react"
-import type { WalletStatus as WalletStatusType } from "@/lib/actions"
 
 interface WalletStatusProps {
   index: number
   balance: string
-  status: WalletStatusType
+  status: "idle" | "processing" | "success" | "error" | "low_balance"
   error?: string
 }
 

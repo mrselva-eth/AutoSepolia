@@ -1,8 +1,5 @@
 "use client"
 
-// Add this to make the page dynamic and avoid caching
-export const dynamic = "force-dynamic"
-
 import { useState, useEffect, useCallback } from "react"
 import { motion } from "framer-motion"
 import { Shield, Wallet, ArrowRightLeft, Plus, Minus, AlertCircle } from "lucide-react"
@@ -23,7 +20,8 @@ import { useTheme } from "next-themes"
 import { InputMethodToggle } from "@/components/input-method-toggle"
 import { validatePrivateKey } from "@/lib/validation"
 import type { GasSpeed } from "@/lib/gas-price"
-import type { WalletStatus as WalletStatusType, WalletResult } from "@/lib/actions"
+
+type WalletStatusType = "idle" | "processing" | "success" | "error" | "low_balance"
 
 interface SourceWallet {
   privateKey: string
@@ -274,107 +272,56 @@ export default function Home() {
       // Switch to monitor tab to show progress
       setActiveTab("monitor")
 
-      // Call the actual transfer function with a timeout handler for Netlify
-      let timeoutId: NodeJS.Timeout
-
-      const transferPromise = startTransfer(
+      // Call the actual transfer function
+      const result = await startTransfer(
         validWallets.map((w) => w.privateKey),
         destinationWallets,
         distributionMethod,
         gasSpeed,
       )
 
-      // Set up a timeout for Netlify (just in case it doesn't respond)
-      const timeoutPromise = new Promise<WalletResult[]>((_, reject) => {
-        timeoutId = setTimeout(() => {
-          reject(new Error("Request timed out - but transfers may still be processing"))
-        }, 8000) // Set timeout to 8 seconds (below Netlify's 10s limit)
-      })
+      // Update UI with results
+      const updatedWallets = [...sourceWallets]
+      let resultIndex = 0
 
-      // Race the transfer promise against the timeout
-      const result = await Promise.race<WalletResult[]>([transferPromise, timeoutPromise])
-        .catch(async (error) => {
-          // If it's a timeout, the transfers might still be happening in the background
-          if (error.message.includes("timed out")) {
-            // Show a message that transfers might still be processing
-            toast.info(
-              "Connection timed out, but transfers may still be processing. Please check wallet balances in a few minutes.",
-            )
-
-            // Wait a while and then refresh balances
-            setTimeout(async () => {
-              await refreshWalletBalances()
-            }, 30000) // Wait 30 seconds
-
-            // Return an empty array so we don't update the UI right away
-            return [] as WalletResult[]
-          }
-          throw error // Re-throw if it's not a timeout error
-        })
-        .finally(() => {
-          // Clear the timeout if it hasn't triggered
-          clearTimeout(timeoutId)
-        })
-
-      // If we got an actual result (not an empty array from timeout handling)
-      if (result && result.length > 0) {
-        // Update UI with results
-        const updatedWallets = [...sourceWallets]
-        let resultIndex = 0
-
-        for (let i = 0; i < updatedWallets.length; i++) {
-          if (updatedWallets[i].privateKey.trim() !== "" && updatedWallets[i].isValid) {
-            if (resultIndex < result.length) {
-              updatedWallets[i].status = result[resultIndex].status
-              updatedWallets[i].balance = result[resultIndex].balance
-              updatedWallets[i].error = result[resultIndex].error
-              resultIndex++
-            }
+      for (let i = 0; i < updatedWallets.length; i++) {
+        if (updatedWallets[i].privateKey.trim() !== "" && updatedWallets[i].isValid) {
+          if (resultIndex < result.length) {
+            updatedWallets[i].status = result[resultIndex].status as WalletStatusType
+            updatedWallets[i].balance = result[resultIndex].balance
+            updatedWallets[i].error = result[resultIndex].error
+            resultIndex++
           }
         }
+      }
 
-        setSourceWallets(updatedWallets)
+      setSourceWallets(updatedWallets)
 
-        // Check if any transfers failed or had low balance
-        const anyFailed = result.some((r) => r.status === "error")
-        const anyLowBalance = result.some((r) => r.status === "low_balance")
+      // Check if any transfers failed or had low balance
+      const anyFailed = result.some((r) => r.status === "error")
+      const anyLowBalance = result.some((r) => r.status === "low_balance")
 
-        if (anyFailed) {
-          toast.error("Some transfers failed. Check the monitor tab for details.")
-        } else if (anyLowBalance) {
-          toast.warning("Some wallets had insufficient balance for transfer.")
-        } else {
-          toast.success("Transfer process completed successfully!")
-        }
+      if (anyFailed) {
+        toast.error("Some transfers failed. Check the monitor tab for details.")
+      } else if (anyLowBalance) {
+        toast.warning("Some wallets had insufficient balance for transfer.")
+      } else {
+        toast.success("Transfer process completed successfully!")
       }
     } catch (error) {
-      console.error("Transfer error:", error)
-      // Determine if this is a network error or a real failure
-      const errorMessage = (error as Error).message
+      toast.error(`Error during transfer process: ${(error as Error).message}`)
+      console.error(error)
 
-      if (errorMessage.includes("network") || errorMessage.includes("502") || errorMessage.includes("Gateway")) {
-        toast.warning(
-          "Network error occurred, but transfers may still be processing. Please check balances in a few minutes.",
-        )
-
-        // Schedule a balance refresh
-        setTimeout(async () => {
-          await refreshWalletBalances()
-        }, 30000) // Wait 30 seconds
-      } else {
-        toast.error(`Error during transfer process: ${errorMessage}`)
-
-        // Reset status to error for valid wallets
-        const resetWallets = [...sourceWallets]
-        validWallets.forEach((wallet) => {
-          const index = sourceWallets.findIndex((w) => w.privateKey === wallet.privateKey)
-          if (index !== -1) {
-            resetWallets[index].status = "error"
-            resetWallets[index].error = errorMessage
-          }
-        })
-        setSourceWallets(resetWallets)
-      }
+      // Reset status to error
+      const resetWallets = [...sourceWallets]
+      validWallets.forEach((wallet) => {
+        const index = sourceWallets.findIndex((w) => w.privateKey === wallet.privateKey)
+        if (index !== -1) {
+          resetWallets[index].status = "error"
+          resetWallets[index].error = (error as Error).message
+        }
+      })
+      setSourceWallets(resetWallets)
     } finally {
       setIsRunning(false)
     }
