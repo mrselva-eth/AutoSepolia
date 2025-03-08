@@ -75,3 +75,30 @@
   }
 }
 
+/* Password masking styles */
+.password-mask {
+  -webkit-text-security: disc;
+  font-family: monospace;
+}
+
+/* Alternative password masking for browsers that don't support -webkit-text-security */
+input[type="password"].password-input {
+  letter-spacing: 0.2em;
+  font-family: monospace;
+  font-weight: bold;
+}
+
+/* Custom password display component */
+.masked-text {
+  font-family: monospace;
+}
+
+.masked-text span {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: currentColor;
+  margin: 0 2px;
+}
+

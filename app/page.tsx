@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from "react"
 import { motion } from "framer-motion"
 import { Shield, Wallet, ArrowRightLeft, Plus, Minus, AlertCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -19,6 +18,7 @@ import { ThemeToggle } from "@/components/theme-toggle"
 import { useTheme } from "next-themes"
 import { InputMethodToggle } from "@/components/input-method-toggle"
 import { validatePrivateKey } from "@/lib/validation"
+import { PrivateKeyInput } from "@/components/private-key-input"
 import type { GasSpeed } from "@/lib/gas-price"
 
 type WalletStatusType = "idle" | "processing" | "success" | "error" | "low_balance"
@@ -451,7 +451,7 @@ export default function Home() {
                           placeholder="Enter private keys separated by commas (e.g., 0x123...abc, 0x456...def, 0x789...ghi)"
                           value={commaSeparatedKeys}
                           onChange={(e) => handleCommaSeparatedKeysChange(e.target.value)}
-                          className={`min-h-[100px] bg-gray-50 border-green-200 focus:border-green-500 dark:bg-black/50 dark:border-green-900/50 dark:focus:border-green-500 ${
+                          className={`min-h-[100px] bg-gray-50 border-green-200 focus:border-green-500 dark:bg-black/50 dark:border-green-900/50 dark:focus:border-green-500 password-mask ${
                             keyErrors.length > 0
                               ? "border-red-300 dark:border-red-700 focus:border-red-500 dark:focus:border-red-500"
                               : ""
@@ -473,16 +473,12 @@ export default function Home() {
                         {sourceWallets.map((wallet, index) => (
                           <div key={index} className="space-y-1">
                             <div className="flex items-center space-x-2">
-                              <Input
-                                type="password"
-                                placeholder={`Wallet ${index + 1} Private Key`}
+                              <PrivateKeyInput
                                 value={wallet.privateKey}
-                                onChange={(e) => updateSourceWallet(index, e.target.value)}
-                                className={`flex-1 bg-gray-50 border-green-200 focus:border-green-500 dark:bg-black/50 dark:border-green-900/50 dark:focus:border-green-500 ${
-                                  wallet.privateKey && !wallet.isValid
-                                    ? "border-red-300 dark:border-red-700 focus:border-red-500 dark:focus:border-red-500"
-                                    : ""
-                                }`}
+                                onChange={(value) => updateSourceWallet(index, value)}
+                                placeholder={`Wallet ${index + 1} Private Key`}
+                                className="flex-1 bg-gray-50 border-green-200 focus:border-green-500 dark:bg-black/50 dark:border-green-900/50 dark:focus:border-green-500"
+                                isInvalid={wallet.privateKey !== "" && !wallet.isValid}
                               />
                               <Button
                                 variant="outline"
