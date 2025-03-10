@@ -1,16 +1,19 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Wallet, CheckCircle, AlertCircle, Clock, AlertTriangle } from "lucide-react"
+import { Wallet, CheckCircle, AlertCircle, Clock, AlertTriangle, ExternalLink } from "lucide-react"
+import { Button } from "@/components/ui/button"
 
 interface WalletStatusProps {
   index: number
   balance: string
   status: "idle" | "processing" | "success" | "error" | "low_balance"
   error?: string
+  txHash?: string
+  pending?: boolean
 }
 
-export function WalletStatus({ index, balance, status, error }: WalletStatusProps) {
+export function WalletStatus({ index, balance, status, error, txHash, pending }: WalletStatusProps) {
   const getStatusIcon = () => {
     switch (status) {
       case "processing":
@@ -35,7 +38,7 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
       case "processing":
         return "Processing"
       case "success":
-        return "Transferred"
+        return pending ? "Sent" : "Transferred"
       case "error":
         return "Failed"
       case "low_balance":
@@ -53,13 +56,21 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
       case "processing":
         return "border-yellow-200 bg-yellow-50 dark:border-yellow-900/50 dark:bg-yellow-900/10"
       case "success":
-        return "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-900/10"
+        return pending
+          ? "border-blue-200 bg-blue-50 dark:border-blue-900/50 dark:bg-blue-900/10"
+          : "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-900/10"
       case "error":
         return "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-900/10"
       case "low_balance":
         return "border-orange-200 bg-orange-50 dark:border-orange-900/50 dark:bg-orange-900/10"
       default:
         return "border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900/20"
+    }
+  }
+
+  const openEtherscan = () => {
+    if (txHash) {
+      window.open(`https://sepolia.etherscan.io/tx/${txHash}`, "_blank")
     }
   }
 
@@ -78,7 +89,15 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
             <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {displayBalance} ETH</div>
           </div>
         </div>
-        <div className="text-sm font-medium">{getStatusText()}</div>
+        <div className="flex items-center">
+          <div className="text-sm font-medium mr-2">{getStatusText()}</div>
+          {txHash && (
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={openEtherscan} title="View on Etherscan">
+              <ExternalLink className="h-4 w-4" />
+              <span className="sr-only">View on Etherscan</span>
+            </Button>
+          )}
+        </div>
       </div>
 
       {(status === "error" || status === "low_balance") && error && (
@@ -98,6 +117,13 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
         <div className="mt-2 text-xs text-yellow-500 flex items-start">
           <Clock className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
           <span>Transaction in progress. This may take several minutes on the Sepolia network.</span>
+        </div>
+      )}
+
+      {status === "success" && pending && (
+        <div className="mt-2 text-xs text-blue-500 flex items-start">
+          <Clock className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
+          <span>Transaction sent but not yet confirmed. Check Etherscan for updates.</span>
         </div>
       )}
     </motion.div>

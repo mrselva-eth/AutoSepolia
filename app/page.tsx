@@ -29,6 +29,8 @@ interface SourceWallet {
   status: WalletStatusType
   isValid: boolean
   error?: string
+  txHash?: string
+  pending?: boolean
 }
 
 interface DestinationWallet {
@@ -192,7 +194,7 @@ export default function Home() {
     }
   }, [sourceInputMethod, sourceWallets])
 
-  // Update the handleStartTransfer function to better handle timeouts
+  // Update the handleStartTransfer function to use the new approach
   const handleStartTransfer = async (gasSpeed: GasSpeed = "average") => {
     // Validate destination wallets
     if (!destinationWallets || destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)) {
@@ -286,41 +288,13 @@ export default function Home() {
         duration: 10000,
       })
 
-      // Call the actual transfer function with a timeout
-      const transferPromise = startTransfer(
+      // Call the transfer function with a timeout
+      const result = await startTransfer(
         validWallets.map((w) => w.privateKey),
         destinationWallets,
         distributionMethod,
         gasSpeed,
       )
-
-      // Set a global timeout for the entire operation
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => {
-          reject(new Error("The operation timed out after 5 minutes. Your transactions may still be processing."))
-        }, 300000) // 5 minutes
-      })
-
-      // Race the transfer against the timeout
-      const result = await Promise.race([transferPromise, timeoutPromise]).catch(async (error) => {
-        console.error("Transfer process error or timeout:", error)
-
-        // If we hit a timeout, we should still try to refresh balances
-        if (error.message.includes("timed out")) {
-          toast.warning("The operation is taking longer than expected. Refreshing wallet balances...")
-          await fetchBalancesForWallets(validWallets)
-
-          // Return a special result indicating timeout but possible success
-          return validWallets.map(() => ({
-            status: "processing" as WalletStatusType,
-            balance: "0",
-            error: "Operation timed out, but transactions may still be processing. Check your wallet balances.",
-          }))
-        }
-
-        // For other errors, propagate them
-        throw error
-      })
 
       // Make sure result is an array before processing
       if (!result || !Array.isArray(result)) {
@@ -338,6 +312,13 @@ export default function Home() {
               updatedWallets[i].status = (result[resultIndex].status as WalletStatusType) || "idle"
               updatedWallets[i].balance = result[resultIndex].balance || updatedWallets[i].balance
               updatedWallets[i].error = result[resultIndex].error
+
+              // Add transaction hash if available
+              if (result[resultIndex].txResults && result[resultIndex].txResults.length > 0) {
+                updatedWallets[i].txHash = result[resultIndex].txResults[0].hash
+                updatedWallets[i].pending = result[resultIndex].txResults[0].pending
+              }
+
               resultIndex++
             }
           }
@@ -348,26 +329,24 @@ export default function Home() {
         // Check if any transfers failed or had low balance
         const anyFailed = result.some((r) => r && r.status === "error")
         const anyLowBalance = result.some((r) => r && r.status === "low_balance")
-        const anyProcessing = result.some((r) => r && r.status === "processing")
+        const anyPending = updatedWallets.some((w) => w.pending)
 
         if (anyFailed) {
           toast.error("Some transfers failed. Check the monitor tab for details.")
         } else if (anyLowBalance) {
           toast.warning("Some wallets had insufficient balance for transfer. Process completed.")
-        } else if (anyProcessing) {
-          toast.info("Some transactions are still processing. Check your wallet balances later.")
+        } else if (anyPending) {
+          toast.success("Transactions sent! Some may still be pending confirmation on the blockchain.")
         } else {
           toast.success("Transfer process completed successfully!")
         }
 
-        // Refresh balances one more time after a short delay
+        // Refresh balances after a short delay
         setTimeout(async () => {
           await fetchBalancesForWallets(validWallets)
         }, 5000)
       } catch (error) {
         console.error("Error processing results:", error)
-        // If we can't process the results but no earlier error was thrown,
-        // the transaction might have completed successfully
         toast.info("Transaction may have completed. Refreshing balances...")
         await fetchBalancesForWallets(validWallets)
       }
@@ -600,6 +579,8 @@ export default function Home() {
                         balance={wallet.balance}
                         status={wallet.status}
                         error={wallet.error}
+                        txHash={wallet.txHash}
+                        pending={wallet.pending}
                       />
                     ))}
                   </div>
