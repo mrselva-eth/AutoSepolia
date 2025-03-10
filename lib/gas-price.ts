@@ -85,38 +85,56 @@ export async function getGasPrice(
   speed: GasSpeed = "average",
   etherscanApiKey?: string,
 ): Promise<bigint> {
-  // For Sepolia, we'll prioritize getting gas prices directly from the provider
-  // since the Etherscan Gas Tracker might not be fully supported
   try {
+    // First try to get fee data from the provider
     const feeData = await provider.getFeeData()
-    const baseFee = feeData.gasPrice || ethers.parseUnits("20", "gwei")
-    const priorityFee = feeData.maxPriorityFeePerGas || ethers.parseUnits("2", "gwei")
 
-    // Apply multiplier based on speed
-    let multiplier = 1.0
-    switch (speed) {
-      case "slow":
-        multiplier = 0.9
-        break
-      case "fast":
-        multiplier = 1.5
-        break
-      case "average":
-      default:
-        multiplier = 1.2
-        break
+    // If we have maxFeePerGas, use that as a base
+    if (feeData.maxFeePerGas) {
+      console.log(`Provider suggested maxFeePerGas: ${ethers.formatUnits(feeData.maxFeePerGas, "gwei")} Gwei`)
+
+      // Apply multiplier based on speed
+      let multiplier = 1.0
+      switch (speed) {
+        case "slow":
+          multiplier = 0.8
+          break
+        case "fast":
+          multiplier = 1.3
+          break
+        case "average":
+        default:
+          multiplier = 1.0
+          break
+      }
+
+      return BigInt(Math.floor(Number(feeData.maxFeePerGas) * multiplier))
     }
 
-    // Calculate gas price with speed multiplier
-    const gasPrice = BigInt(Math.floor(Number(baseFee) * multiplier)) + priorityFee
+    // If we have gasPrice, use that
+    if (feeData.gasPrice) {
+      console.log(`Provider suggested gasPrice: ${ethers.formatUnits(feeData.gasPrice, "gwei")} Gwei`)
 
-    // Ensure minimum gas price (especially important for testnets)
-    const minGasPrice = ethers.parseUnits("8", "gwei")
-    return gasPrice > minGasPrice ? gasPrice : minGasPrice
-  } catch (error) {
-    console.error("Error getting gas price from provider:", error)
+      // Apply multiplier based on speed
+      let multiplier = 1.0
+      switch (speed) {
+        case "slow":
+          multiplier = 0.8
+          break
+        case "fast":
+          multiplier = 1.3
+          break
+        case "average":
+        default:
+          multiplier = 1.0
+          break
+      }
 
-    // Try to get gas price from Etherscan as a fallback
+      return BigInt(Math.floor(Number(feeData.gasPrice) * multiplier))
+    }
+
+    // If we couldn't get fee data from the provider, try Etherscan
+    console.log("No fee data from provider, trying Etherscan...")
     const etherscanData = await getEtherscanGasPrice("sepolia", etherscanApiKey)
 
     if (etherscanData) {
@@ -135,19 +153,34 @@ export async function getGasPrice(
           break
       }
 
-      // Convert from Gwei to Wei
+      console.log(`Etherscan suggested gas price (${speed}): ${gasPriceGwei} Gwei`)
       return ethers.parseUnits(gasPriceGwei, "gwei")
     }
 
-    // Last resort fallback
+    // If all else fails, use reasonable defaults for Sepolia
+    console.log("Using default gas price values")
     switch (speed) {
       case "slow":
-        return ethers.parseUnits("8", "gwei")
+        return ethers.parseUnits("20", "gwei")
       case "fast":
-        return ethers.parseUnits("15", "gwei")
+        return ethers.parseUnits("50", "gwei")
       case "average":
       default:
-        return ethers.parseUnits("10", "gwei")
+        return ethers.parseUnits("35", "gwei")
+    }
+  } catch (error) {
+    console.error("Error getting gas price:", error)
+
+    // Last resort fallback
+    console.log("Using fallback gas price due to error")
+    switch (speed) {
+      case "slow":
+        return ethers.parseUnits("20", "gwei")
+      case "fast":
+        return ethers.parseUnits("50", "gwei")
+      case "average":
+      default:
+        return ethers.parseUnits("35", "gwei")
     }
   }
 }

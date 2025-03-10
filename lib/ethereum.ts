@@ -90,17 +90,60 @@ export async function prepareTransaction(
     throw new Error(`Balance too low to transfer (< ${ethers.formatEther(minBalance)} SepoliaETH)`)
   }
 
-  // Calculate available amount after gas reserve
-  const gasReserve = ethers.parseEther("0.003") * BigInt(destinationWallets.length)
-  const availableAmount = balance - gasReserve
+  // Get gas price - try multiple speeds if needed
+  let gasPrice: bigint
+  let usedGasSpeed = gasSpeed
 
-  if (availableAmount <= BigInt(0)) {
-    throw new Error("Not enough balance to cover transfers after gas costs")
+  try {
+    // First try with requested speed
+    gasPrice = await getGasPrice(provider, gasSpeed, etherscanApiKey)
+    console.log(`Gas price (${gasSpeed}): ${ethers.formatUnits(gasPrice, "gwei")} Gwei`)
+
+    // If gas price is extremely high (over 100 Gwei), try a lower speed
+    if (gasPrice > ethers.parseUnits("100", "gwei") && gasSpeed !== "slow") {
+      console.log("Gas price is very high, trying slower speed...")
+      const slowerGasPrice = await getGasPrice(provider, "slow", etherscanApiKey)
+      console.log(`Gas price (slow): ${ethers.formatUnits(slowerGasPrice, "gwei")} Gwei`)
+
+      // Use the slower gas price if it's significantly lower
+      if (slowerGasPrice < (gasPrice * BigInt(80)) / BigInt(100)) {
+        gasPrice = slowerGasPrice
+        usedGasSpeed = "slow"
+        console.log("Using slower gas price to save on fees")
+      }
+    }
+
+    // If gas price is still extremely high (over 150 Gwei), use a fixed lower value
+    if (gasPrice > ethers.parseUnits("150", "gwei")) {
+      console.log("Gas price is extremely high, using fixed lower value")
+      gasPrice = ethers.parseUnits("50", "gwei")
+      console.log(`Using fixed gas price: ${ethers.formatUnits(gasPrice, "gwei")} Gwei`)
+    }
+  } catch (error) {
+    console.error("Error getting gas price:", error)
+    // Use a reasonable default
+    gasPrice = ethers.parseUnits("50", "gwei")
+    console.log(`Using default gas price: ${ethers.formatUnits(gasPrice, "gwei")} Gwei`)
   }
 
-  // Get gas price
-  const gasPrice = await getGasPrice(provider, gasSpeed, etherscanApiKey)
-  console.log(`Gas price: ${ethers.formatUnits(gasPrice, "gwei")} Gwei`)
+  // Calculate gas cost for a standard ETH transfer
+  const gasLimit = BigInt(21000)
+  const gasCost = gasPrice * gasLimit
+
+  console.log(`Estimated gas cost: ${ethers.formatEther(gasCost)} ETH`)
+
+  // Calculate available amount after gas reserve
+  // Reserve enough for gas plus a small buffer
+  const gasReserve = (gasCost * BigInt(destinationWallets.length) * BigInt(12)) / BigInt(10)
+  const availableAmount = balance - gasReserve
+
+  console.log(`Available for transfer after gas reserve: ${ethers.formatEther(availableAmount)} ETH`)
+
+  if (availableAmount <= BigInt(0)) {
+    throw new Error(
+      `Not enough balance to cover transfers after gas costs. Need at least ${ethers.formatEther(gasReserve)} ETH for gas.`,
+    )
+  }
 
   // Get nonce
   const nonce = await provider.getTransactionCount(wallet.address, "pending")
@@ -119,9 +162,6 @@ export async function prepareTransaction(
       `Preparing transfer of ${ethers.formatEther(amountForWallet)} ETH (${destWallet.percentage}%) to ${destWallet.address}`,
     )
 
-    // Standard gas limit for ETH transfer
-    const gasLimit = BigInt(21000)
-
     // Prepare transaction object
     const tx = {
       to: destWallet.address,
@@ -137,6 +177,7 @@ export async function prepareTransaction(
       destination: destWallet.address,
       percentage: destWallet.percentage,
       amount: amountForWallet.toString(),
+      gasPrice: gasPrice.toString(),
     })
   }
 
@@ -188,12 +229,77 @@ export async function sendPreparedTransaction(privateKey: string, preparedTxs: a
       }
     } catch (error) {
       console.error(`Error sending transaction to ${preparedTx.destination}:`, error)
-      results.push({
-        success: false,
-        destination: preparedTx.destination,
-        percentage: preparedTx.percentage,
-        error: (error as Error).message,
-      })
+
+      // Check if this is an "insufficient funds" error
+      const errorMessage = (error as Error).message || ""
+      if (errorMessage.includes("insufficient funds")) {
+        // Try again with a lower amount
+        try {
+          console.log("Insufficient funds error. Trying with a lower amount...")
+
+          // Reduce the amount by 10%
+          const reducedAmount = (BigInt(preparedTx.amount) * BigInt(90)) / BigInt(100)
+
+          // If the reduced amount is too small, don't bother
+          if (reducedAmount < ethers.parseUnits("0.001", "ether")) {
+            throw new Error("Amount too small after reduction")
+          }
+
+          console.log(`Retrying with amount: ${ethers.formatEther(reducedAmount)} ETH`)
+
+          // Create a new transaction with reduced amount
+          const newTx = {
+            ...preparedTx.tx,
+            value: reducedAmount,
+          }
+
+          // Send the transaction
+          const transaction = await wallet.sendTransaction(newTx)
+          console.log(`Transaction sent with reduced amount: ${transaction.hash}`)
+
+          // Wait for transaction with a short timeout
+          const receipt = await waitForTransaction(provider, transaction.hash, 30000)
+
+          if (receipt.timeout) {
+            results.push({
+              success: true,
+              hash: transaction.hash,
+              destination: preparedTx.destination,
+              percentage: preparedTx.percentage,
+              amount: ethers.formatEther(reducedAmount),
+              pending: true,
+              message: "Transaction sent with reduced amount but not yet confirmed. Check your wallet later.",
+            })
+          } else {
+            results.push({
+              success: true,
+              hash: transaction.hash,
+              blockNumber: receipt.blockNumber,
+              destination: preparedTx.destination,
+              percentage: preparedTx.percentage,
+              amount: ethers.formatEther(reducedAmount),
+              pending: false,
+              message: "Transaction completed with reduced amount due to high gas fees.",
+            })
+          }
+        } catch (retryError) {
+          console.error("Error on retry with lower amount:", retryError)
+          results.push({
+            success: false,
+            destination: preparedTx.destination,
+            percentage: preparedTx.percentage,
+            error: `Insufficient funds even after reducing amount. Gas prices may be too high. Error: ${(retryError as Error).message}`,
+          })
+        }
+      } else {
+        // For other errors, just record the failure
+        results.push({
+          success: false,
+          destination: preparedTx.destination,
+          percentage: preparedTx.percentage,
+          error: (error as Error).message,
+        })
+      }
     }
   }
 
