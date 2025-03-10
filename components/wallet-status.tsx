@@ -14,7 +14,11 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
   const getStatusIcon = () => {
     switch (status) {
       case "processing":
-        return <Clock className="h-5 w-5 text-yellow-500" />
+        return (
+          <div className="animate-pulse">
+            <Clock className="h-5 w-5 text-yellow-500" />
+          </div>
+        )
       case "success":
         return <CheckCircle className="h-5 w-5 text-green-500" />
       case "error":
@@ -87,6 +91,13 @@ export function WalletStatus({ index, balance, status, error }: WalletStatusProp
             <AlertCircle className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
           )}
           <span>{error}</span>
+        </div>
+      )}
+
+      {status === "processing" && (
+        <div className="mt-2 text-xs text-yellow-500 flex items-start">
+          <Clock className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
+          <span>Transaction in progress. This may take several minutes on the Sepolia network.</span>
         </div>
       )}
     </motion.div>

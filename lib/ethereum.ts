@@ -1,10 +1,9 @@
 import { ethers } from "ethers"
 import { getGasPrice, type GasSpeed } from "./gas-price"
 
-// Improve error handling in the waitForTransaction function:
-
-export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 180000) {
-  // Increased timeout to 180 seconds (3 minutes) for Sepolia network
+// Update the waitForTransaction function to handle timeouts better
+export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHash: string, timeout = 240000) {
+  // Increased timeout to 240 seconds (4 minutes) for Sepolia network
   const startTime = Date.now()
 
   try {
@@ -59,7 +58,7 @@ export async function waitForTransaction(provider: ethers.JsonRpcProvider, txHas
   }
 }
 
-// Update the transferFunds function to handle low balances better
+// Update the transferFunds function to handle timeouts better
 export async function transferFunds(
   privateKey: string,
   destinationAddress: string,
@@ -69,14 +68,32 @@ export async function transferFunds(
   etherscanApiKey?: string,
 ) {
   console.log(`Starting transfer to ${destinationAddress}...`)
-  const provider = new ethers.JsonRpcProvider(rpcEndpoint)
+
+  // Create a provider with correct options structure for ethers.js v6
+  const provider = new ethers.JsonRpcProvider(rpcEndpoint, undefined, {
+    staticNetwork: null,
+    polling: true,
+    pollingInterval: 4000, // Poll every 4 seconds
+  })
 
   // Create wallet instance
   const wallet = new ethers.Wallet(privateKey, provider)
   const walletAddress = wallet.address
 
-  // Get current balance
-  const balance = await provider.getBalance(walletAddress)
+  // Get current balance with timeout
+  const balancePromise = provider.getBalance(walletAddress).catch((error) => {
+    console.error("Error getting balance:", error)
+    throw new Error(`Failed to get wallet balance: ${error.message}`)
+  })
+
+  // Set a timeout for the balance check
+  const balanceTimeout = new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error("Balance check timed out")), 15000)
+  })
+
+  // Race the balance check against the timeout
+  const balance = await Promise.race([balancePromise, balanceTimeout])
+
   console.log(`Wallet ${walletAddress} balance: ${ethers.formatEther(balance)} SepoliaETH`)
 
   // Check if balance is too low to transfer (need to keep some for gas)

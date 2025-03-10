@@ -94,7 +94,7 @@ export async function checkWalletBalance(privateKey: string) {
   }
 }
 
-// Update the startTransfer function to handle errors better
+// Update the startTransfer function to handle timeouts better
 export async function startTransfer(
   privateKeys: string[],
   destinationWallets: DestinationWallet[],
@@ -124,73 +124,105 @@ export async function startTransfer(
     }
 
     try {
-      // Get initial balance and check if it's sufficient
-      const balanceCheck = await checkWalletBalance(privateKey)
+      // Set a timeout for the entire wallet processing
+      const walletProcessPromise = (async () => {
+        // Get initial balance and check if it's sufficient
+        const balanceCheck = await checkWalletBalance(privateKey)
 
-      // If there was an error checking the balance
-      if (balanceCheck.error) {
-        results.push({
-          status: "error",
-          balance: "0",
-          error: `Error checking balance: ${balanceCheck.error}`,
-        })
-        continue
-      }
+        // If there was an error checking the balance
+        if (balanceCheck.error) {
+          return {
+            status: "error",
+            balance: "0",
+            error: `Error checking balance: ${balanceCheck.error}`,
+          }
+        }
 
-      const { balance: initialBalance, address: sourceAddress, hasSufficientBalance, minRequired } = balanceCheck
+        const { balance: initialBalance, address: sourceAddress, hasSufficientBalance, minRequired } = balanceCheck
 
-      // If balance is too low, mark as low_balance and continue to next wallet
-      if (!hasSufficientBalance) {
-        console.log(
-          `Wallet ${sourceAddress} has insufficient balance: ${initialBalance} ETH (minimum required: ${minRequired} ETH)`,
+        // If balance is too low, mark as low_balance and continue to next wallet
+        if (!hasSufficientBalance) {
+          console.log(
+            `Wallet ${sourceAddress} has insufficient balance: ${initialBalance} ETH (minimum required: ${minRequired} ETH)`,
+          )
+          return {
+            status: "low_balance",
+            balance: initialBalance,
+            error: `Balance too low (${initialBalance} ETH). Minimum required: ${minRequired} ETH. Process completed.`,
+          }
+        }
+
+        // Set status to processing
+        results[i] = { status: "processing", balance: initialBalance }
+
+        // Prepare destination wallets with correct percentages
+        let processedDestinations = [...destinationWallets]
+
+        // If equal distribution, adjust percentages
+        if (distributionMethod === "equal" && destinationWallets.length > 0) {
+          const equalPercentage = 100 / destinationWallets.length
+          processedDestinations = destinationWallets.map((wallet) => ({
+            ...wallet,
+            percentage: equalPercentage,
+          }))
+        }
+
+        console.log(`Distributing funds from wallet ${sourceAddress} to ${processedDestinations.length} destination(s)`)
+        console.log(`Using gas speed: ${gasSpeed}`)
+
+        // Distribute funds
+        const distributionResults = await distributeFunds(
+          privateKey,
+          processedDestinations,
+          rpcEndpoint,
+          gasSpeed,
+          etherscanApiKey,
         )
-        results.push({
-          status: "low_balance",
-          balance: initialBalance,
-          error: `Balance too low (${initialBalance} ETH). Minimum required: ${minRequired} ETH. Process completed.`,
-        })
-        continue
-      }
 
-      // Set status to processing
-      results.push({ status: "processing", balance: initialBalance })
+        // Check if any transfers were successful
+        const anySuccess = distributionResults.some((result) => result.success)
 
-      // Prepare destination wallets with correct percentages
-      let processedDestinations = [...destinationWallets]
+        if (!anySuccess) {
+          throw new Error("All transfers failed. Check console for details.")
+        }
 
-      // If equal distribution, adjust percentages
-      if (distributionMethod === "equal" && destinationWallets.length > 0) {
-        const equalPercentage = 100 / destinationWallets.length
-        processedDestinations = destinationWallets.map((wallet) => ({
-          ...wallet,
-          percentage: equalPercentage,
-        }))
-      }
+        // Get updated balance
+        const { balance: updatedBalance } = await getWalletBalance(privateKey, rpcEndpoint)
 
-      console.log(`Distributing funds from wallet ${sourceAddress} to ${processedDestinations.length} destination(s)`)
-      console.log(`Using gas speed: ${gasSpeed}`)
+        // Return success status
+        return { status: "success", balance: updatedBalance }
+      })()
 
-      // Distribute funds
-      const distributionResults = await distributeFunds(
-        privateKey,
-        processedDestinations,
-        rpcEndpoint,
-        gasSpeed,
-        etherscanApiKey,
-      )
+      // Set a timeout of 240 seconds (4 minutes) for the entire wallet processing
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error("Wallet processing timed out after 240 seconds"))
+        }, 240000)
+      })
 
-      // Check if any transfers were successful
-      const anySuccess = distributionResults.some((result) => result.success)
+      // Race the wallet processing against the timeout
+      const result = await Promise.race([walletProcessPromise, timeoutPromise]).catch(async (error) => {
+        console.error(`Error or timeout processing wallet ${i + 1}:`, error)
 
-      if (!anySuccess) {
-        throw new Error("All transfers failed. Check console for details.")
-      }
+        // Try to get current balance even after timeout
+        try {
+          const { balance } = await getWalletBalance(privateKey, rpcEndpoint)
+          return {
+            status: "error",
+            balance,
+            error: `Operation timed out: ${error.message}. The transaction may still be processing.`,
+          }
+        } catch (balanceError) {
+          return {
+            status: "error",
+            balance: "0",
+            error: `Operation timed out: ${error.message}. Could not retrieve current balance.`,
+          }
+        }
+      })
 
-      // Get updated balance
-      const { balance: updatedBalance } = await getWalletBalance(privateKey, rpcEndpoint)
-
-      // Update status to success
-      results[i] = { status: "success", balance: updatedBalance }
+      // Add the result to our results array
+      results[i] = result
     } catch (error) {
       console.error(`Error processing wallet ${i + 1}:`, error)
 
