@@ -1,27 +1,20 @@
 "use client"
 
 import { motion } from "framer-motion"
-import { Wallet, CheckCircle, AlertCircle, Clock, AlertTriangle, ExternalLink } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import { Wallet, CheckCircle, AlertCircle, Clock, AlertTriangle } from "lucide-react"
 
 interface WalletStatusProps {
   index: number
   balance: string
   status: "idle" | "processing" | "success" | "error" | "low_balance"
   error?: string
-  txHash?: string
-  pending?: boolean
 }
 
-export function WalletStatus({ index, balance, status, error, txHash, pending }: WalletStatusProps) {
+export function WalletStatus({ index, balance, status, error }: WalletStatusProps) {
   const getStatusIcon = () => {
     switch (status) {
       case "processing":
-        return (
-          <div className="animate-pulse">
-            <Clock className="h-5 w-5 text-yellow-500" />
-          </div>
-        )
+        return <Clock className="h-5 w-5 text-yellow-500" />
       case "success":
         return <CheckCircle className="h-5 w-5 text-green-500" />
       case "error":
@@ -38,7 +31,7 @@ export function WalletStatus({ index, balance, status, error, txHash, pending }:
       case "processing":
         return "Processing"
       case "success":
-        return pending ? "Sent" : "Transferred"
+        return "Transferred"
       case "error":
         return "Failed"
       case "low_balance":
@@ -56,9 +49,7 @@ export function WalletStatus({ index, balance, status, error, txHash, pending }:
       case "processing":
         return "border-yellow-200 bg-yellow-50 dark:border-yellow-900/50 dark:bg-yellow-900/10"
       case "success":
-        return pending
-          ? "border-blue-200 bg-blue-50 dark:border-blue-900/50 dark:bg-blue-900/10"
-          : "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-900/10"
+        return "border-green-200 bg-green-50 dark:border-green-900/50 dark:bg-green-900/10"
       case "error":
         return "border-red-200 bg-red-50 dark:border-red-900/50 dark:bg-red-900/10"
       case "low_balance":
@@ -68,11 +59,13 @@ export function WalletStatus({ index, balance, status, error, txHash, pending }:
     }
   }
 
-  const openEtherscan = () => {
-    if (txHash) {
-      window.open(`https://sepolia.etherscan.io/tx/${txHash}`, "_blank")
-    }
-  }
+  // Extract gas price information from error message if available
+  const gasInfo =
+    error && error.includes("gas prices")
+      ? error.match(/$$([0-9.]+) Gwei$$/)
+        ? error.match(/$$([0-9.]+) Gwei$$/)?.[1] + " Gwei"
+        : null
+      : null
 
   return (
     <motion.div
@@ -87,17 +80,10 @@ export function WalletStatus({ index, balance, status, error, txHash, pending }:
           <div className="ml-3">
             <div className="text-sm font-medium">Wallet {index + 1}</div>
             <div className="text-xs text-gray-500 dark:text-gray-400">Balance: {displayBalance} ETH</div>
+            {gasInfo && <div className="text-xs text-orange-500">Current gas price: {gasInfo}</div>}
           </div>
         </div>
-        <div className="flex items-center">
-          <div className="text-sm font-medium mr-2">{getStatusText()}</div>
-          {txHash && (
-            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={openEtherscan} title="View on Etherscan">
-              <ExternalLink className="h-4 w-4" />
-              <span className="sr-only">View on Etherscan</span>
-            </Button>
-          )}
-        </div>
+        <div className="text-sm font-medium">{getStatusText()}</div>
       </div>
 
       {(status === "error" || status === "low_balance") && error && (
@@ -110,20 +96,6 @@ export function WalletStatus({ index, balance, status, error, txHash, pending }:
             <AlertCircle className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
           )}
           <span>{error}</span>
-        </div>
-      )}
-
-      {status === "processing" && (
-        <div className="mt-2 text-xs text-yellow-500 flex items-start">
-          <Clock className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
-          <span>Transaction in progress. This may take several minutes on the Sepolia network.</span>
-        </div>
-      )}
-
-      {status === "success" && pending && (
-        <div className="mt-2 text-xs text-blue-500 flex items-start">
-          <Clock className="h-3 w-3 mr-1 mt-0.5 flex-shrink-0" />
-          <span>Transaction sent but not yet confirmed. Check Etherscan for updates.</span>
         </div>
       )}
     </motion.div>

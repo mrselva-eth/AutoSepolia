@@ -29,8 +29,6 @@ interface SourceWallet {
   status: WalletStatusType
   isValid: boolean
   error?: string
-  txHash?: string
-  pending?: boolean
 }
 
 interface DestinationWallet {
@@ -194,7 +192,6 @@ export default function Home() {
     }
   }, [sourceInputMethod, sourceWallets])
 
-  // Update the handleStartTransfer function to use the new approach
   const handleStartTransfer = async (gasSpeed: GasSpeed = "average") => {
     // Validate destination wallets
     if (!destinationWallets || destinationWallets.length === 0 || destinationWallets.some((w) => !w.address)) {
@@ -283,12 +280,7 @@ export default function Home() {
       // Switch to monitor tab to show progress
       setActiveTab("monitor")
 
-      // Show a toast to inform the user that this might take a while
-      toast.info("Processing transactions. This may take several minutes, please be patient.", {
-        duration: 10000,
-      })
-
-      // Call the transfer function with a timeout
+      // Call the actual transfer function
       const result = await startTransfer(
         validWallets.map((w) => w.privateKey),
         destinationWallets,
@@ -303,50 +295,50 @@ export default function Home() {
 
       try {
         // Update UI with results
-        const updatedWallets = [...sourceWallets]
-        let resultIndex = 0
+        if (result && Array.isArray(result)) {
+          const updatedWallets = [...sourceWallets]
+          let resultIndex = 0
 
-        for (let i = 0; i < updatedWallets.length; i++) {
-          if (updatedWallets[i].privateKey && updatedWallets[i].privateKey.trim() !== "" && updatedWallets[i].isValid) {
-            if (resultIndex < result.length) {
-              updatedWallets[i].status = (result[resultIndex].status as WalletStatusType) || "idle"
-              updatedWallets[i].balance = result[resultIndex].balance || updatedWallets[i].balance
-              updatedWallets[i].error = result[resultIndex].error
-
-              // Add transaction hash if available
-              if (result[resultIndex].txResults && result[resultIndex].txResults.length > 0) {
-                updatedWallets[i].txHash = result[resultIndex].txResults[0].hash
-                updatedWallets[i].pending = result[resultIndex].txResults[0].pending
+          for (let i = 0; i < updatedWallets.length; i++) {
+            if (
+              updatedWallets[i].privateKey &&
+              updatedWallets[i].privateKey.trim() !== "" &&
+              updatedWallets[i].isValid
+            ) {
+              if (resultIndex < result.length) {
+                updatedWallets[i].status = (result[resultIndex].status as WalletStatusType) || "idle"
+                updatedWallets[i].balance = result[resultIndex].balance || updatedWallets[i].balance
+                updatedWallets[i].error = result[resultIndex].error
+                resultIndex++
               }
-
-              resultIndex++
             }
           }
-        }
 
-        setSourceWallets(updatedWallets)
+          setSourceWallets(updatedWallets)
 
-        // Check if any transfers failed or had low balance
-        const anyFailed = result.some((r) => r && r.status === "error")
-        const anyLowBalance = result.some((r) => r && r.status === "low_balance")
-        const anyPending = updatedWallets.some((w) => w.pending)
+          // Check if any transfers failed or had low balance
+          const anyFailed = result.some((r) => r && r.status === "error")
+          const anyLowBalance = result.some((r) => r && r.status === "low_balance")
 
-        if (anyFailed) {
-          toast.error("Some transfers failed. Check the monitor tab for details.")
-        } else if (anyLowBalance) {
-          toast.warning("Some wallets had insufficient balance for transfer. Process completed.")
-        } else if (anyPending) {
-          toast.success("Transactions sent! Some may still be pending confirmation on the blockchain.")
+          if (anyFailed) {
+            toast.error("Some transfers failed. Check the monitor tab for details.")
+          } else if (anyLowBalance) {
+            toast.warning("Some wallets had insufficient balance for transfer. Process completed.")
+          } else {
+            toast.success("Transfer process completed successfully!")
+          }
         } else {
-          toast.success("Transfer process completed successfully!")
-        }
+          // If result is not as expected but no error was thrown, show a success message
+          // This handles the case where the transaction completed but the response was malformed
+          toast.success("Transaction likely completed, but couldn't get detailed results.")
 
-        // Refresh balances after a short delay
-        setTimeout(async () => {
+          // Refresh balances to show updated state
           await fetchBalancesForWallets(validWallets)
-        }, 5000)
+        }
       } catch (error) {
         console.error("Error processing results:", error)
+        // If we can't process the results but no earlier error was thrown,
+        // the transaction might have completed successfully
         toast.info("Transaction may have completed. Refreshing balances...")
         await fetchBalancesForWallets(validWallets)
       }
@@ -364,11 +356,6 @@ export default function Home() {
         }
       })
       setSourceWallets(resetWallets)
-
-      // Try to refresh balances anyway
-      setTimeout(async () => {
-        await fetchBalancesForWallets(validWallets)
-      }, 5000)
     } finally {
       setIsRunning(false)
     }
@@ -579,8 +566,6 @@ export default function Home() {
                         balance={wallet.balance}
                         status={wallet.status}
                         error={wallet.error}
-                        txHash={wallet.txHash}
-                        pending={wallet.pending}
                       />
                     ))}
                   </div>

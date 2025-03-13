@@ -1,6 +1,6 @@
 "use server"
 
-import { getWalletBalance, prepareTransaction, sendPreparedTransaction } from "./ethereum"
+import { distributeFunds, getWalletBalance } from "./ethereum"
 import type { GasSpeed } from "./gas-price"
 import { ethers } from "ethers"
 
@@ -50,7 +50,8 @@ export async function getWalletBalances(privateKeys: string[]) {
   return results
 }
 
-// Update the checkWalletBalance function to handle errors better
+// Update the checkWalletBalance function to account for high gas prices
+
 export async function checkWalletBalance(privateKey: string) {
   try {
     const rpcEndpoint = getRpcEndpoint()
@@ -72,14 +73,22 @@ export async function checkWalletBalance(privateKey: string) {
     // Convert balance to ETH (as a number)
     const balanceEth = Number.parseFloat(ethers.formatEther(balance))
 
-    // Minimum required balance (0.005 ETH)
-    const minBalance = 0.005
+    // Get current gas price to make a better estimate
+    const feeData = await provider.getFeeData()
+    const gasPrice = feeData.gasPrice || ethers.parseUnits("20", "gwei")
+    const gasLimit = BigInt(21000) // Standard ETH transfer
+    const estimatedGasCost = gasPrice * gasLimit
+    const gasCostEth = Number.parseFloat(ethers.formatEther(estimatedGasCost))
+
+    // Minimum required balance (0.005 ETH or 3x current gas cost, whichever is higher)
+    const minGasCost = Math.max(0.005, gasCostEth * 3)
 
     return {
       address: wallet.address,
       balance: ethers.formatEther(balance),
-      hasSufficientBalance: balanceEth >= minBalance,
-      minRequired: minBalance,
+      hasSufficientBalance: balanceEth >= minGasCost,
+      minRequired: minGasCost,
+      currentGasPrice: ethers.formatUnits(gasPrice, "gwei"),
     }
   } catch (error) {
     console.error("Error checking wallet balance:", error)
@@ -94,16 +103,17 @@ export async function checkWalletBalance(privateKey: string) {
   }
 }
 
-// New function to prepare transactions without executing them
-export async function prepareTransferTransactions(
+// Update the startTransfer function to handle errors better
+export async function startTransfer(
   privateKeys: string[],
   destinationWallets: DestinationWallet[],
   distributionMethod: "equal" | "percentage" | "custom",
   gasSpeed: GasSpeed = "average",
 ) {
-  console.log("Preparing transfer transactions...")
+  console.log("Starting transfer process...")
   const rpcEndpoint = getRpcEndpoint()
   const etherscanApiKey = getEtherscanApiKey()
+  console.log(`Using Etherscan API key: ${etherscanApiKey ? "Yes" : "No"}`)
   const results = []
 
   // Ensure we have valid destination wallets
@@ -152,12 +162,7 @@ export async function prepareTransferTransactions(
       }
 
       // Set status to processing
-      results.push({
-        status: "processing",
-        balance: initialBalance,
-        address: sourceAddress,
-        privateKey: privateKey, // We need this for the next step
-      })
+      results.push({ status: "processing", balance: initialBalance })
 
       // Prepare destination wallets with correct percentages
       let processedDestinations = [...destinationWallets]
@@ -171,13 +176,11 @@ export async function prepareTransferTransactions(
         }))
       }
 
-      console.log(
-        `Preparing transactions from wallet ${sourceAddress} to ${processedDestinations.length} destination(s)`,
-      )
+      console.log(`Distributing funds from wallet ${sourceAddress} to ${processedDestinations.length} destination(s)`)
       console.log(`Using gas speed: ${gasSpeed}`)
 
-      // Instead of executing transactions, just prepare them
-      const preparedTransactions = await prepareTransaction(
+      // Distribute funds
+      const distributionResults = await distributeFunds(
         privateKey,
         processedDestinations,
         rpcEndpoint,
@@ -185,16 +188,20 @@ export async function prepareTransferTransactions(
         etherscanApiKey,
       )
 
-      // Store the prepared transactions in the result
-      results[i] = {
-        status: "processing",
-        balance: initialBalance,
-        address: sourceAddress,
-        privateKey: privateKey,
-        preparedTransactions: preparedTransactions,
+      // Check if any transfers were successful
+      const anySuccess = distributionResults.some((result) => result.success)
+
+      if (!anySuccess) {
+        throw new Error("All transfers failed. Check console for details.")
       }
+
+      // Get updated balance
+      const { balance: updatedBalance } = await getWalletBalance(privateKey, rpcEndpoint)
+
+      // Update status to success
+      results[i] = { status: "success", balance: updatedBalance }
     } catch (error) {
-      console.error(`Error preparing transactions for wallet ${i + 1}:`, error)
+      console.error(`Error processing wallet ${i + 1}:`, error)
 
       // Get current balance if possible
       try {
@@ -208,98 +215,5 @@ export async function prepareTransferTransactions(
   }
 
   return results
-}
-
-// New function to execute prepared transactions
-export async function executeTransactions(preparedData: any[]) {
-  console.log("Executing prepared transactions...")
-  const rpcEndpoint = getRpcEndpoint()
-  const results = []
-
-  for (let i = 0; i < preparedData.length; i++) {
-    const data = preparedData[i]
-
-    // Skip wallets that don't have prepared transactions
-    if (!data || !data.preparedTransactions || data.status !== "processing") {
-      results.push(data) // Keep the original data
-      continue
-    }
-
-    try {
-      console.log(`Executing transactions for wallet ${data.address}...`)
-
-      // Execute the prepared transactions
-      const txResults = await sendPreparedTransaction(data.privateKey, data.preparedTransactions, rpcEndpoint)
-
-      // Check if any transfers were successful
-      const anySuccess = txResults.some((result: any) => result.success)
-
-      if (!anySuccess) {
-        throw new Error("All transfers failed. Check console for details.")
-      }
-
-      // Get updated balance
-      const { balance: updatedBalance } = await getWalletBalance(data.privateKey, rpcEndpoint)
-
-      // Update status to success
-      results.push({
-        status: "success",
-        balance: updatedBalance,
-        address: data.address,
-        txResults: txResults,
-      })
-    } catch (error) {
-      console.error(`Error executing transactions for wallet ${data.address}:`, error)
-
-      // Get current balance if possible
-      try {
-        const { balance } = await getWalletBalance(data.privateKey, rpcEndpoint)
-        results.push({
-          status: "error",
-          balance,
-          address: data.address,
-          error: (error as Error).message,
-        })
-      } catch {
-        // If we can't get the balance, just mark as error
-        results.push({
-          status: "error",
-          balance: "0",
-          address: data.address,
-          error: (error as Error).message,
-        })
-      }
-    }
-  }
-
-  return results
-}
-
-// Update the startTransfer function to use the two-step approach
-export async function startTransfer(
-  privateKeys: string[],
-  destinationWallets: DestinationWallet[],
-  distributionMethod: "equal" | "percentage" | "custom",
-  gasSpeed: GasSpeed = "average",
-) {
-  try {
-    // Step 1: Prepare the transactions (this should be quick)
-    const preparedData = await prepareTransferTransactions(
-      privateKeys,
-      destinationWallets,
-      distributionMethod,
-      gasSpeed,
-    )
-
-    // Step 2: Execute the prepared transactions
-    return await executeTransactions(preparedData)
-  } catch (error) {
-    console.error("Error in startTransfer:", error)
-    return privateKeys.map(() => ({
-      status: "error" as WalletStatus,
-      balance: "0",
-      error: (error as Error).message,
-    }))
-  }
 }
 
